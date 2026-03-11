@@ -111,6 +111,7 @@ public final class AsyncMenuRenderEngine {
     Optional<String> pageTarget = Optional.empty();
     if (reason == RenderReason.PAGE_CHANGED) {
       pageTarget = view.consumePageAreaRenderTarget();
+      pageTarget.ifPresent(areaId -> clearStickyForPagedArea(view, areaId));
     }
 
     PagingBundle paging = renderPaging(view, pageTarget);
@@ -118,20 +119,30 @@ public final class AsyncMenuRenderEngine {
     RenderResult base = ctx.toRenderResult();
     RenderResult merged = merge(base, paging.result());
 
-    if (reason != RenderReason.PAGE_CHANGED) {
-      merged = injectDefaultPagingNavItemsIfEmpty(view, merged);
-    }
-
+    merged = injectDefaultPagingNavItemsIfEmpty(view, merged);
     merged = applyEmptySlotFiller(def, size, merged);
 
     Map<Integer, MenuSlot.MenuClickHandler> mergedHandlers = new HashMap<>(ctx.clickHandlers());
     mergedHandlers.putAll(paging.handlers());
 
-    if (reason == RenderReason.PAGE_CHANGED) {
-      return new RenderBundle(paging.result(), Map.copyOf(mergedHandlers));
-    }
-
     return new RenderBundle(merged, Map.copyOf(mergedHandlers));
+  }
+
+  private void clearStickyForPagedArea(BukkitMenuView view, String areaId) {
+    Objects.requireNonNull(view, "view must not be null");
+    if (areaId == null || areaId.isBlank()) return;
+
+    var pagedOpt = view.definition().pagedAreas();
+    if (pagedOpt.isEmpty()) return;
+
+    for (var area : pagedOpt.get()) {
+      if (!area.id().equals(areaId)) continue;
+
+      int capacity = area.bounds().capacity();
+      var slots = PageSlotMapper.slotsFor(area.bounds(), capacity);
+      view.clearStickySlots(Set.copyOf(slots));
+      return;
+    }
   }
 
   private static RenderResult applyEmptySlotFiller(MenuDefinition def, int size, RenderResult input) {

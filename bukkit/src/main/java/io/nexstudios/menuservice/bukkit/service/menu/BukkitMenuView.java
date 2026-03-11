@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -158,6 +159,13 @@ public final class BukkitMenuView implements MenuView {
   public void requestRender(RenderReason reason) {
     if (closed.get()) return;
     renderEngine.requestRender(this, reason);
+  }
+
+  public void clearStickySlots(Set<Integer> slots) {
+    Objects.requireNonNull(slots, "slots must not be null");
+    for (int slot : slots) {
+      stickyOverrides.remove(slot);
+    }
   }
 
   @Override
