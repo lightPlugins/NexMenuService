@@ -1,0 +1,38 @@
+package io.nexstudios.menuservice.common.api;
+
+import io.nexstudios.menuservice.common.api.deposit.DepositHandler;
+import io.nexstudios.menuservice.common.api.page.PagedAreaDefinition;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * A menu blueprint (definition) registered in the registry.
+ */
+public interface MenuDefinition {
+
+  MenuKey key();
+
+  String title();
+
+  int rows();
+
+  /**
+   * If empty, the implementation uses a global/default refresh interval.
+   */
+  Optional<Duration> refreshInterval();
+
+  InteractionPolicy interactionPolicy();
+
+  MenuPopulator populator();
+
+  Optional<MenuInteractionHooks> interactionHooks();
+
+  Optional<DepositHandler> depositHandler();
+
+  /**
+   * Optional list of paged areas declared for this menu.
+   */
+  Optional<List<PagedAreaDefinition<?>>> pagedAreas();
+}
