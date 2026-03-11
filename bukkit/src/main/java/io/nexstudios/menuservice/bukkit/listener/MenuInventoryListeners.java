@@ -13,6 +13,7 @@ import io.nexstudios.menuservice.common.api.ViewerRef;
 import io.nexstudios.menuservice.common.api.deposit.DepositHandler;
 import io.nexstudios.menuservice.common.api.deposit.DepositPolicy;
 import io.nexstudios.menuservice.common.api.interaction.ClickAction;
+import io.nexstudios.menuservice.common.api.interaction.DragAction;
 import io.nexstudios.menuservice.common.api.interaction.InventoryArea;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
 import org.bukkit.Material;
@@ -385,28 +386,25 @@ public final class MenuInventoryListeners implements Listener {
     ItemStack oldCursor = event.getOldCursor();
     if (isEmpty(oldCursor)) return false;
 
-    // targetSlots in top
     Set<Integer> targetSlots = new HashSet<>();
     for (int raw : event.getRawSlots()) {
       if (raw >= 0 && raw < topSize) targetSlots.add(raw);
     }
     if (targetSlots.isEmpty()) return false;
 
-    // Use Bukkit's computed per-slot items (amount per slot)
-    Map<Integer, ItemStack> newItems = event.getNewItems(); // rawSlot -> ItemStack
+    Map<Integer, ItemStack> newItems = event.getNewItems();
     if (newItems.isEmpty()) return false;
 
-    var interaction = new SimpleInteractionContext(
+    DragAction dragAction = (targetSlots.size() <= 1) ? DragAction.SINGLE_SLOT : DragAction.MULTI_SLOT;
+
+    var interaction = SimpleInteractionContext.drag(
         viewer,
         InventoryArea.TOP,
-        ClickAction.UNKNOWN,
-        -1,
+        dragAction,
         snapshotAdapter.toMenuItemSnapshot(oldCursor),
-        Optional.empty(),
-        Optional.empty()
+        targetSlots
     );
 
-    // Validate all top target slots are allowed and we can place/stack each result
     Map<Integer, MenuItem> resultingBySlot = new HashMap<>();
     int totalPlaced = 0;
 
@@ -425,10 +423,8 @@ public final class MenuInventoryListeners implements Listener {
 
       MenuItem resulting = decision.resultingItem().orElse(offered);
 
-      // Can we actually stack/fit this resulting item into the slot?
       ItemStack current = top.getItem(slot);
       ItemStack resultStack = itemAdapter.toItemStack(resulting);
-
       if (!canPlaceOrStack(current, resultStack)) return false;
 
       resultingBySlot.put(slot, resulting);
@@ -437,12 +433,10 @@ public final class MenuInventoryListeners implements Listener {
 
     if (resultingBySlot.isEmpty()) return false;
 
-    // Apply
     for (var e : resultingBySlot.entrySet()) {
       int slot = e.getKey();
       MenuItem resulting = e.getValue();
 
-      // Stack if needed
       ItemStack current = top.getItem(slot);
       ItemStack toPlace = itemAdapter.toItemStack(resulting);
 
@@ -452,21 +446,20 @@ public final class MenuInventoryListeners implements Listener {
         ItemStack merged = current.clone();
         merged.setAmount(Math.min(merged.getMaxStackSize(), merged.getAmount() + toPlace.getAmount()));
         top.setItem(slot, merged);
-        // keep renderstate consistent (best-effort)
         view.patchSlotNow(slot, snapshotAdapter.toMenuItemSnapshot(merged).orElse(resulting));
       }
 
       view.depositLedger().ifPresent(ledger -> ledger.recordDeposit(slot, resulting));
     }
 
-    // Update cursor amount: oldCursor - totalPlaced (clamp)
+    // Cursor update – use view cursor setter (non-deprecated)
     int remaining = Math.max(0, oldCursor.getAmount() - totalPlaced);
     if (remaining == 0) {
-      event.setCursor(new ItemStack(Material.AIR));
+      setViewCursor(event.getView(), new ItemStack(Material.AIR));
     } else {
       ItemStack newCursor = oldCursor.clone();
       newCursor.setAmount(remaining);
-      event.setCursor(newCursor);
+      setViewCursor(event.getView(), newCursor);
     }
 
     return true;

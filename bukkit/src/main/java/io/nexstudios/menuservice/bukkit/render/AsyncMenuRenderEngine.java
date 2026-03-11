@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import io.nexstudios.menuservice.common.api.item.MenuItem;
 
 /**
  * Async render -> diff -> main-thread apply pipeline.
@@ -105,17 +106,23 @@ public final class AsyncMenuRenderEngine {
     MenuDefinition def = view.definition();
     int size = view.inventory().getSize();
 
-    // Always run populator to keep click handlers up-to-date (even for PAGE_CHANGED partial renders).
     RenderPopulateContext ctx = new RenderPopulateContext(view.key(), view.viewer(), size);
     def.populator().populate(ctx);
 
-    // Add paging overlay + navigation handlers
-    RenderResult paging = renderPaging(view, reason);
+    Optional<String> pageTarget = Optional.empty();
+    if (reason == RenderReason.PAGE_CHANGED) {
+      pageTarget = view.consumePageAreaRenderTarget();
+    }
+
+    RenderResult paging = renderPaging(view, pageTarget);
 
     RenderResult base = ctx.toRenderResult();
     RenderResult merged = merge(base, paging);
 
-    // For PAGE_CHANGED: only output page-area changes (and clears) to keep rest untouched.
+    if (reason != RenderReason.PAGE_CHANGED) {
+      merged = injectDefaultPagingNavItemsIfEmpty(view, merged);
+    }
+
     if (reason == RenderReason.PAGE_CHANGED) {
       return new RenderBundle(paging, ctx.clickHandlers());
     }
@@ -123,7 +130,32 @@ public final class AsyncMenuRenderEngine {
     return new RenderBundle(merged, ctx.clickHandlers());
   }
 
-  private RenderResult renderPaging(BukkitMenuView view, RenderReason reason) {
+  private static RenderResult injectDefaultPagingNavItemsIfEmpty(BukkitMenuView view, RenderResult input) {
+    var pagedOpt = view.definition().pagedAreas();
+    if (pagedOpt.isEmpty()) return input;
+
+    Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
+    Set<Integer> cleared = new HashSet<>(input.clearedSlots());
+
+    for (var area : pagedOpt.get()) {
+      var nav = area.navigation();
+
+      nav.previousSlot().ifPresent(slot -> items.putIfAbsent(slot,
+          MenuItem.builder("minecraft:arrow").displayName("Previous").amount(1).build()
+      ));
+      nav.nextSlot().ifPresent(slot -> items.putIfAbsent(slot,
+          MenuItem.builder("minecraft:arrow").displayName("Next").amount(1).build()
+      ));
+      nav.refreshSlot().ifPresent(slot -> items.putIfAbsent(slot,
+          MenuItem.builder("minecraft:paper").displayName("Refresh").amount(1).build()
+      ));
+    }
+
+    cleared.removeAll(items.keySet());
+    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
+  }
+
+  private RenderResult renderPaging(BukkitMenuView view, Optional<String> targetAreaId) {
     var pagedOpt = view.definition().pagedAreas();
     var pageStateOpt = view.pageState();
     if (pagedOpt.isEmpty() || pageStateOpt.isEmpty()) return RenderResult.empty();
@@ -134,10 +166,14 @@ public final class AsyncMenuRenderEngine {
     Set<Integer> cleared = new HashSet<>();
 
     for (PagedAreaDefinition<?> raw : pagedOpt.get()) {
+      if (targetAreaId.isPresent() && !raw.id().equals(targetAreaId.get())) {
+        continue;
+      }
+
       @SuppressWarnings("unchecked")
       PagedAreaDefinition<Object> area = (PagedAreaDefinition<Object>) raw;
 
-      List<Object> elements = area.load(view.key(), view.viewer()); // async thread, OK
+      List<Object> elements = area.load(view.key(), view.viewer());
 
       PageModel model = area.model();
       int pageCount = model.pageCountFor(elements.size());
@@ -145,8 +181,6 @@ public final class AsyncMenuRenderEngine {
 
       int requestedIndex = state.getIndex(area.id());
       int clampedIndex = model.clampPageIndex(requestedIndex, elements.size());
-
-      // Keep state consistent (prevents drifting to huge indices)
       if (clampedIndex != requestedIndex) {
         state.setIndex(area.id(), clampedIndex);
       }
@@ -223,6 +257,7 @@ public final class AsyncMenuRenderEngine {
         if (current <= 0) return;
 
         state.setIndex(raw.id(), current - 1);
+        view.targetPageAreaRender(raw.id());
         view.requestRender(RenderReason.PAGE_CHANGED);
       }));
 
@@ -233,10 +268,12 @@ public final class AsyncMenuRenderEngine {
         if (current >= maxIndex) return;
 
         state.setIndex(raw.id(), current + 1);
+        view.targetPageAreaRender(raw.id());
         view.requestRender(RenderReason.PAGE_CHANGED);
       }));
 
       nav.refreshSlot().ifPresent(refreshSlot -> handlers.put(refreshSlot, ctx -> {
+        view.targetPageAreaRender(raw.id());
         view.requestRender(RenderReason.PAGE_CHANGED);
       }));
     }

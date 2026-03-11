@@ -3,6 +3,7 @@ package io.nexstudios.menuservice.bukkit.service.menu;
 import io.nexstudios.menuservice.bukkit.deposit.BukkitDepositLedger;
 import io.nexstudios.menuservice.bukkit.deposit.DepositReturner;
 import io.nexstudios.menuservice.bukkit.render.AsyncMenuRenderEngine;
+import io.nexstudios.menuservice.common.api.ClosePhase;
 import io.nexstudios.menuservice.common.api.CloseReason;
 import io.nexstudios.menuservice.common.api.MenuDefinition;
 import io.nexstudios.menuservice.common.api.MenuKey;
@@ -220,6 +221,15 @@ public final class BukkitMenuView implements MenuView {
     // detach from service first to avoid races with InventoryCloseEvent
     service.clearViewIfSame(viewer.uniqueId(), this);
 
+    // Close hook (BEFORE)
+    definition.interactionHooks().ifPresent(hooks -> {
+      try {
+        hooks.onClose(key, viewer, reason, ClosePhase.BEFORE_CLOSE);
+      } catch (Exception ignored) {
+        // do not fail close because of hook exceptions
+      }
+    });
+
     Player player = Bukkit.getPlayer(viewer.uniqueId());
     if (player != null) {
       // Return deposits safely (if enabled)
@@ -239,6 +249,13 @@ public final class BukkitMenuView implements MenuView {
       }
     }
 
-    // Deposit return will be integrated here in step 2 (DepositLedger + return strategy).
+    // Close hook (AFTER)
+    definition.interactionHooks().ifPresent(hooks -> {
+      try {
+        hooks.onClose(key, viewer, reason, ClosePhase.AFTER_CLOSE);
+      } catch (Exception ignored) {
+        // do not fail close because of hook exceptions
+      }
+    });
   }
 }

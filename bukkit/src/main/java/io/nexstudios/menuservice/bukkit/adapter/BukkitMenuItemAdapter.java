@@ -7,6 +7,7 @@ import net.kyori.adventure.text.Component;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.enchantments.Enchantment;
+import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.ArrayList;
@@ -44,15 +45,29 @@ public final class BukkitMenuItemAdapter {
       meta.setUnbreakable(item.unbreakable());
 
       applyEnchantments(meta, item.enchantments());
-      // hideFlagsBitset mapping will be added later.
+      applyHideFlags(meta, item.hideFlagsBitset());
     });
 
     return stack;
   }
 
   private static Material resolveMaterial(String materialKey) {
+    if (materialKey == null || materialKey.isBlank()) return Material.BARRIER;
+
+    // 1) Direct match (Paper/Bukkit may accept different formats depending on version)
     Material match = Material.matchMaterial(materialKey);
     if (match != null) return match;
+
+    // 2) If namespaced, try the "value" part (e.g. "minecraft:stone" -> "stone")
+    int colon = materialKey.indexOf(':');
+    if (colon > 0 && colon < materialKey.length() - 1) {
+      String value = materialKey.substring(colon + 1);
+      match = Material.matchMaterial(value);
+      if (match != null) return match;
+
+      match = Material.matchMaterial(value.toUpperCase(java.util.Locale.ROOT));
+      if (match != null) return match;
+    }
 
     // Unknown/custom item id without a resolver installed yet.
     return Material.BARRIER;
@@ -77,6 +92,24 @@ public final class BukkitMenuItemAdapter {
       if (level < 1) level = 1;
 
       meta.addEnchant(enchantment, level, true);
+    }
+  }
+
+  private static void applyHideFlags(org.bukkit.inventory.meta.ItemMeta meta, int hideFlagsBitset) {
+    if (meta == null) return;
+
+    // Clear known flags first, then apply according to bitset.
+    meta.removeItemFlags(ItemFlag.values());
+
+    if (hideFlagsBitset <= 0) return;
+
+    for (ItemFlag flag : ItemFlag.values()) {
+      int ord = flag.ordinal();
+
+      int bit = 1 << ord;
+      if ((hideFlagsBitset & bit) != 0) {
+        meta.addItemFlags(flag);
+      }
     }
   }
 }

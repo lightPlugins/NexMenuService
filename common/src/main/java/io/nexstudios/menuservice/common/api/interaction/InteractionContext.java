@@ -4,6 +4,7 @@ import io.nexstudios.menuservice.common.api.ViewerRef;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
 
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Normalized interaction snapshot used by hooks/handlers.
@@ -36,4 +37,20 @@ public interface InteractionContext {
    * Hotbar button 1-9 if clickAction == NUMBER_KEY_SWAP.
    */
   Optional<Integer> hotbarButton();
+
+  /**
+   * Drag action if this interaction originated from a drag event.
+   * Default: UNKNOWN (non-drag interactions).
+   */
+  default DragAction dragAction() {
+    return DragAction.UNKNOWN;
+  }
+
+  /**
+   * Raw target slots (top/bottom) affected by the drag, if known.
+   * Default: empty (non-drag interactions).
+   */
+  default Optional<Set<Integer>> draggedSlots() {
+    return Optional.empty();
+  }
 }

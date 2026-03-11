@@ -15,4 +15,27 @@ public interface MenuInteractionHooks {
   default void onBottomInventoryClick(ViewerRef viewer, MenuItem clickedItem, ClickAction action) {
     // default no-op
   }
+
+  /**
+   * Called when a menu view is closed for any reason.
+   *
+   * Implementations should be fast and must not throw.
+   */
+  default void onClose(MenuKey menuKey, ViewerRef viewer, CloseReason reason) {
+    // default no-op
+  }
+
+  /**
+   * Called when a menu view is closed for any reason, with phase information.
+   *
+   * Default implementation keeps backwards-compatibility by calling {@link #onClose(MenuKey, ViewerRef, CloseReason)}
+   * only once in {@link ClosePhase#AFTER_CLOSE}.
+   *
+   * Implementations should be fast and must not throw.
+   */
+  default void onClose(MenuKey menuKey, ViewerRef viewer, CloseReason reason, ClosePhase phase) {
+    if (phase == ClosePhase.AFTER_CLOSE) {
+      onClose(menuKey, viewer, reason);
+    }
+  }
 }

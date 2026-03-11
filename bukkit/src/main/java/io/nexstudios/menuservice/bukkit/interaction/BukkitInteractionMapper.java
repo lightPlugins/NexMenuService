@@ -40,7 +40,7 @@ public final class BukkitInteractionMapper {
       if (btn >= 0 && btn <= 8) hotbarButton = Optional.of(btn + 1);
     }
 
-    return new SimpleInteractionContext(
+    return SimpleInteractionContext.click(
         viewer,
         area,
         clickAction,
