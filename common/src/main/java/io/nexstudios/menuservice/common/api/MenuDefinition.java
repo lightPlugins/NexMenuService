@@ -1,6 +1,7 @@
 package io.nexstudios.menuservice.common.api;
 
 import io.nexstudios.menuservice.common.api.deposit.DepositHandler;
+import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.page.PagedAreaDefinition;
 
 import java.time.Duration;
@@ -35,4 +36,11 @@ public interface MenuDefinition {
    * Optional list of paged areas declared for this menu.
    */
   Optional<List<PagedAreaDefinition<?>>> pagedAreas();
+
+  /**
+   * Optional filler item for empty slots.
+   * Applied at the very end of rendering (after populator + paging + navigation),
+   * so it decorates all remaining empty fields.
+   */
+  Optional<MenuItem> emptySlotFiller();
 }

@@ -1,10 +1,12 @@
 package io.nexstudios.menuservice.bukkit.render;
 
+
 import io.nexstudios.menuservice.bukkit.adapter.BukkitMenuItemAdapter;
 import io.nexstudios.menuservice.bukkit.service.menu.BukkitMenuView;
 import io.nexstudios.menuservice.bukkit.service.menu.ClickHandlerStore;
 import io.nexstudios.menuservice.common.api.MenuDefinition;
 import io.nexstudios.menuservice.common.api.MenuSlot;
+import io.nexstudios.menuservice.common.api.MenuDefaults;
 import io.nexstudios.menuservice.common.api.page.*;
 import io.nexstudios.menuservice.common.api.deposit.DepositLedger;
 import io.nexstudios.menuservice.common.api.deposit.DepositPolicy;
@@ -120,6 +122,8 @@ public final class AsyncMenuRenderEngine {
       merged = injectDefaultPagingNavItemsIfEmpty(view, merged);
     }
 
+    merged = applyEmptySlotFiller(def, size, merged);
+
     Map<Integer, MenuSlot.MenuClickHandler> mergedHandlers = new HashMap<>(ctx.clickHandlers());
     mergedHandlers.putAll(paging.handlers());
 
@@ -128,6 +132,34 @@ public final class AsyncMenuRenderEngine {
     }
 
     return new RenderBundle(merged, Map.copyOf(mergedHandlers));
+  }
+
+  private static RenderResult applyEmptySlotFiller(MenuDefinition def, int size, RenderResult input) {
+    Objects.requireNonNull(def, "def must not be null");
+    Objects.requireNonNull(input, "input must not be null");
+    if (size < 1) return input;
+
+    var fillerOpt = def.emptySlotFiller();
+    if (fillerOpt.isEmpty()) {
+      fillerOpt = MenuDefaults.defaultEmptySlotFiller();
+    }
+    if (fillerOpt.isEmpty()) return input;
+
+    MenuItem filler = fillerOpt.get();
+
+    Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
+    Set<Integer> cleared = new HashSet<>(input.clearedSlots());
+
+    for (int slot = 0; slot < size; slot++) {
+      if (items.containsKey(slot)) continue;
+
+      // If the slot would end up empty (whether it was "cleared" or never set),
+      // we decorate/fill it.
+      items.put(slot, filler);
+      cleared.remove(slot);
+    }
+
+    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
   }
 
   private static RenderResult injectDefaultPagingNavItemsIfEmpty(BukkitMenuView view, RenderResult input) {
