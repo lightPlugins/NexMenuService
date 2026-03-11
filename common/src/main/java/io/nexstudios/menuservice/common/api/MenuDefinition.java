@@ -43,4 +43,12 @@ public interface MenuDefinition {
    * so it decorates all remaining empty fields.
    */
   Optional<MenuItem> emptySlotFiller();
+
+  /**
+   * Controls whether menu decorations (e.g. empty-slot filler) are applied.
+   * Default: enabled.
+   */
+  default boolean decorationsEnabled() {
+    return true;
+  }
 }

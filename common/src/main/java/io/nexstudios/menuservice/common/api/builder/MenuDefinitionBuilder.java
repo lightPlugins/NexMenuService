@@ -42,6 +42,8 @@ public final class MenuDefinitionBuilder {
   @Nullable
   private MenuItem emptySlotFiller;
 
+  private boolean decorationsEnabled = true;
+
   public static MenuDefinitionBuilder create() {
     return new MenuDefinitionBuilder();
   }
@@ -130,6 +132,16 @@ public final class MenuDefinitionBuilder {
     return this;
   }
 
+  /**
+   * Disables/enables decorations for this menu definition.
+   *
+   * @param disabled true to disable decorations, false to enable them
+   */
+  public MenuDefinitionBuilder disableDecorations(boolean disabled) {
+    this.decorationsEnabled = !disabled;
+    return this;
+  }
+
   public MenuDefinition build() {
     Objects.requireNonNull(key, "key must not be null");
     Objects.requireNonNull(title, "title must not be null");
@@ -152,6 +164,8 @@ public final class MenuDefinitionBuilder {
 
     final Optional<MenuItem> builtEmptySlotFiller = Optional.ofNullable(emptySlotFiller);
 
+    final boolean builtDecorationsEnabled = decorationsEnabled;
+
     return new MenuDefinition() {
       @Override public MenuKey key() { return builtKey; }
       @Override public String title() { return builtTitle; }
@@ -163,6 +177,11 @@ public final class MenuDefinitionBuilder {
       @Override public Optional<DepositHandler> depositHandler() { return builtDepositHandler; }
       @Override public Optional<List<PagedAreaDefinition<?>>> pagedAreas() { return builtPagedAreas; }
       @Override public Optional<MenuItem> emptySlotFiller() { return builtEmptySlotFiller; }
+
+      @Override
+      public boolean decorationsEnabled() {
+        return builtDecorationsEnabled;
+      }
 
       @Override
       public String toString() {

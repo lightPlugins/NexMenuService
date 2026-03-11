@@ -139,6 +139,10 @@ public final class AsyncMenuRenderEngine {
     Objects.requireNonNull(input, "input must not be null");
     if (size < 1) return input;
 
+    if (!def.decorationsEnabled()) {
+      return input;
+    }
+
     MenuItem filler = def.emptySlotFiller().orElse(MenuDefaults.defaultEmptySlotFiller());
 
     Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
