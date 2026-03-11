@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "io.nexstudios.menuservice"
-version = "1.0-SNAPSHOT"
+version = providers.gradleProperty("serviceVersion").get()
 
 dependencies {
     implementation(project(":common"))
