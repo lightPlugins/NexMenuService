@@ -5,10 +5,7 @@ import io.nexstudios.menuservice.bukkit.service.menu.BukkitMenuView;
 import io.nexstudios.menuservice.bukkit.service.menu.ClickHandlerStore;
 import io.nexstudios.menuservice.common.api.MenuDefinition;
 import io.nexstudios.menuservice.common.api.MenuSlot;
-import io.nexstudios.menuservice.common.api.page.PagedAreaDefinition;
-import io.nexstudios.menuservice.common.api.page.PageModel;
-import io.nexstudios.menuservice.common.api.page.PageRenderer;
-import io.nexstudios.menuservice.common.api.page.PageState;
+import io.nexstudios.menuservice.common.api.page.*;
 import io.nexstudios.menuservice.common.api.deposit.DepositLedger;
 import io.nexstudios.menuservice.common.api.deposit.DepositPolicy;
 import io.nexstudios.menuservice.common.api.render.RenderDiff;
@@ -114,20 +111,23 @@ public final class AsyncMenuRenderEngine {
       pageTarget = view.consumePageAreaRenderTarget();
     }
 
-    RenderResult paging = renderPaging(view, pageTarget);
+    PagingBundle paging = renderPaging(view, pageTarget);
 
     RenderResult base = ctx.toRenderResult();
-    RenderResult merged = merge(base, paging);
+    RenderResult merged = merge(base, paging.result());
 
     if (reason != RenderReason.PAGE_CHANGED) {
       merged = injectDefaultPagingNavItemsIfEmpty(view, merged);
     }
 
+    Map<Integer, MenuSlot.MenuClickHandler> mergedHandlers = new HashMap<>(ctx.clickHandlers());
+    mergedHandlers.putAll(paging.handlers());
+
     if (reason == RenderReason.PAGE_CHANGED) {
-      return new RenderBundle(paging, ctx.clickHandlers());
+      return new RenderBundle(paging.result(), Map.copyOf(mergedHandlers));
     }
 
-    return new RenderBundle(merged, ctx.clickHandlers());
+    return new RenderBundle(merged, Map.copyOf(mergedHandlers));
   }
 
   private static RenderResult injectDefaultPagingNavItemsIfEmpty(BukkitMenuView view, RenderResult input) {
@@ -155,15 +155,16 @@ public final class AsyncMenuRenderEngine {
     return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
   }
 
-  private RenderResult renderPaging(BukkitMenuView view, Optional<String> targetAreaId) {
+  private PagingBundle renderPaging(BukkitMenuView view, Optional<String> targetAreaId) {
     var pagedOpt = view.definition().pagedAreas();
     var pageStateOpt = view.pageState();
-    if (pagedOpt.isEmpty() || pageStateOpt.isEmpty()) return RenderResult.empty();
+    if (pagedOpt.isEmpty() || pageStateOpt.isEmpty()) return PagingBundle.empty();
 
     PageState state = pageStateOpt.get();
 
     Map<Integer, io.nexstudios.menuservice.common.api.item.MenuItem> items = new HashMap<>();
     Set<Integer> cleared = new HashSet<>();
+    Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>();
 
     for (PagedAreaDefinition<?> raw : pagedOpt.get()) {
       if (targetAreaId.isPresent() && !raw.id().equals(targetAreaId.get())) {
@@ -188,9 +189,28 @@ public final class AsyncMenuRenderEngine {
       RenderResult page = PageRenderer.renderPage(area, clampedIndex, elements);
       items.putAll(page.slotsToItems());
       cleared.addAll(page.clearedSlots());
+
+      // Build click handlers for the currently rendered slice (if configured)
+      area.clickHandler().ifPresent(ch -> {
+        int start = model.startIndex(clampedIndex);
+        int end = model.endExclusiveIndex(clampedIndex, elements.size());
+        List<Object> slice = elements.subList(start, end);
+
+        List<Integer> targetSlots = PageSlotMapper.slotsFor(area.bounds(), slice.size());
+        for (int i = 0; i < slice.size(); i++) {
+          Object element = slice.get(i);
+          int globalIndex = start + i;
+          int slot = targetSlots.get(i);
+
+          handlers.put(slot, ctx -> ch.onClick(element, globalIndex, ctx));
+        }
+      });
     }
 
-    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
+    return new PagingBundle(
+        new RenderResult(Map.copyOf(items), Set.copyOf(cleared)),
+        Map.copyOf(handlers)
+    );
   }
 
   private static RenderResult merge(RenderResult a, RenderResult b) {
@@ -321,6 +341,17 @@ public final class AsyncMenuRenderEngine {
     private RenderBundle {
       Objects.requireNonNull(result, "result must not be null");
       Objects.requireNonNull(handlers, "handlers must not be null");
+    }
+  }
+
+  private record PagingBundle(RenderResult result, Map<Integer, MenuSlot.MenuClickHandler> handlers) {
+    private PagingBundle {
+      Objects.requireNonNull(result, "result must not be null");
+      Objects.requireNonNull(handlers, "handlers must not be null");
+    }
+
+    static PagingBundle empty() {
+      return new PagingBundle(RenderResult.empty(), Map.of());
     }
   }
 }

@@ -4,6 +4,9 @@ import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.papermc.paper.registry.RegistryAccess;
 import io.papermc.paper.registry.RegistryKey;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.enchantments.Enchantment;
@@ -22,6 +25,11 @@ import java.util.Objects;
  */
 public final class BukkitMenuItemAdapter {
 
+  private static final MiniMessage MINI_MESSAGE = MiniMessage.miniMessage();
+
+  private static final LegacyComponentSerializer LEGACY_AMPERSAND =
+      LegacyComponentSerializer.legacyAmpersand();
+
   public ItemStack toItemStack(MenuItem item) {
     Objects.requireNonNull(item, "item must not be null");
 
@@ -30,13 +38,13 @@ public final class BukkitMenuItemAdapter {
 
     stack.editMeta(meta -> {
       if (item.displayName() != null) {
-        meta.displayName(Component.text(item.displayName()));
+        meta.displayName(deserializeText(item.displayName()).decoration(TextDecoration.ITALIC, false));
       }
 
       if (!item.lore().isEmpty()) {
         List<Component> lore = new ArrayList<>(item.lore().size());
         for (String line : item.lore()) {
-          lore.add(Component.text(line));
+          lore.add(deserializeText(line).decoration(TextDecoration.ITALIC, false));
         }
         meta.lore(lore);
       }
@@ -49,6 +57,19 @@ public final class BukkitMenuItemAdapter {
     });
 
     return stack;
+  }
+
+  private static Component deserializeText(String input) {
+    if (input == null) return Component.empty();
+
+    // Legacy support (&c, &l, ...) + §-Codes
+    if (input.indexOf('&') >= 0 || input.indexOf('§') >= 0) {
+      String normalized = input.replace('§', '&');
+      return LEGACY_AMPERSAND.deserialize(normalized);
+    }
+
+    // MiniMessage support (<red>, <bold>, <gradient:...>, ...)
+    return MINI_MESSAGE.deserialize(input);
   }
 
   private static Material resolveMaterial(String materialKey) {
