@@ -139,13 +139,7 @@ public final class AsyncMenuRenderEngine {
     Objects.requireNonNull(input, "input must not be null");
     if (size < 1) return input;
 
-    var fillerOpt = def.emptySlotFiller();
-    if (fillerOpt.isEmpty()) {
-      fillerOpt = MenuDefaults.defaultEmptySlotFiller();
-    }
-    if (fillerOpt.isEmpty()) return input;
-
-    MenuItem filler = fillerOpt.get();
+    MenuItem filler = def.emptySlotFiller().orElse(MenuDefaults.defaultEmptySlotFiller());
 
     Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
     Set<Integer> cleared = new HashSet<>(input.clearedSlots());
