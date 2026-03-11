@@ -1,8 +1,14 @@
 package io.nexstudios.menuservice.common.api.builder;
 
-import io.nexstudios.menuservice.common.api.*;
+import io.nexstudios.menuservice.common.api.InteractionPolicy;
+import io.nexstudios.menuservice.common.api.MenuDefinition;
+import io.nexstudios.menuservice.common.api.MenuInteractionHooks;
+import io.nexstudios.menuservice.common.api.MenuKey;
+import io.nexstudios.menuservice.common.api.MenuPopulator;
 import io.nexstudios.menuservice.common.api.deposit.DepositHandler;
+import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.page.PagedAreaDefinition;
+import org.jetbrains.annotations.Nullable;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -19,13 +25,22 @@ public final class MenuDefinitionBuilder {
   private String title;
   private int rows = 6;
 
-  private Optional<Duration> refreshInterval = Optional.empty();
+  @Nullable
+  private Duration refreshInterval;
+
   private InteractionPolicy interactionPolicy;
   private MenuPopulator populator;
 
-  private Optional<MenuInteractionHooks> interactionHooks = Optional.empty();
-  private Optional<DepositHandler> depositHandler = Optional.empty();
+  @Nullable
+  private MenuInteractionHooks interactionHooks;
+
+  @Nullable
+  private DepositHandler depositHandler;
+
   private final List<PagedAreaDefinition<?>> pagedAreas = new ArrayList<>();
+
+  @Nullable
+  private MenuItem emptySlotFiller;
 
   public static MenuDefinitionBuilder create() {
     return new MenuDefinitionBuilder();
@@ -56,12 +71,12 @@ public final class MenuDefinitionBuilder {
     if (refreshInterval.isNegative() || refreshInterval.isZero()) {
       throw new IllegalArgumentException("refreshInterval must be > 0");
     }
-    this.refreshInterval = Optional.of(refreshInterval);
+    this.refreshInterval = refreshInterval;
     return this;
   }
 
   public MenuDefinitionBuilder noRefreshIntervalOverride() {
-    this.refreshInterval = Optional.empty();
+    this.refreshInterval = null;
     return this;
   }
 
@@ -76,22 +91,22 @@ public final class MenuDefinitionBuilder {
   }
 
   public MenuDefinitionBuilder interactionHooks(MenuInteractionHooks hooks) {
-    this.interactionHooks = Optional.of(Objects.requireNonNull(hooks, "hooks must not be null"));
+    this.interactionHooks = Objects.requireNonNull(hooks, "hooks must not be null");
     return this;
   }
 
   public MenuDefinitionBuilder noInteractionHooks() {
-    this.interactionHooks = Optional.empty();
+    this.interactionHooks = null;
     return this;
   }
 
   public MenuDefinitionBuilder depositHandler(DepositHandler handler) {
-    this.depositHandler = Optional.of(Objects.requireNonNull(handler, "handler must not be null"));
+    this.depositHandler = Objects.requireNonNull(handler, "handler must not be null");
     return this;
   }
 
   public MenuDefinitionBuilder noDepositHandler() {
-    this.depositHandler = Optional.empty();
+    this.depositHandler = null;
     return this;
   }
 
@@ -105,6 +120,16 @@ public final class MenuDefinitionBuilder {
     return this;
   }
 
+  public MenuDefinitionBuilder fillEmptySlotsWith(MenuItem filler) {
+    this.emptySlotFiller = Objects.requireNonNull(filler, "filler must not be null");
+    return this;
+  }
+
+  public MenuDefinitionBuilder noEmptySlotFiller() {
+    this.emptySlotFiller = null;
+    return this;
+  }
+
   public MenuDefinition build() {
     Objects.requireNonNull(key, "key must not be null");
     Objects.requireNonNull(title, "title must not be null");
@@ -114,13 +139,18 @@ public final class MenuDefinitionBuilder {
     final MenuKey builtKey = key;
     final String builtTitle = title;
     final int builtRows = rows;
-    final Optional<Duration> builtRefreshInterval = refreshInterval;
+
+    final Optional<Duration> builtRefreshInterval = Optional.ofNullable(refreshInterval);
     final InteractionPolicy builtInteractionPolicy = interactionPolicy;
     final MenuPopulator builtPopulator = populator;
-    final Optional<MenuInteractionHooks> builtHooks = interactionHooks;
-    final Optional<DepositHandler> builtDepositHandler = depositHandler;
+
+    final Optional<MenuInteractionHooks> builtHooks = Optional.ofNullable(interactionHooks);
+    final Optional<DepositHandler> builtDepositHandler = Optional.ofNullable(depositHandler);
+
     final Optional<List<PagedAreaDefinition<?>>> builtPagedAreas =
         pagedAreas.isEmpty() ? Optional.empty() : Optional.of(List.copyOf(pagedAreas));
+
+    final Optional<MenuItem> builtEmptySlotFiller = Optional.ofNullable(emptySlotFiller);
 
     return new MenuDefinition() {
       @Override public MenuKey key() { return builtKey; }
@@ -132,6 +162,7 @@ public final class MenuDefinitionBuilder {
       @Override public Optional<MenuInteractionHooks> interactionHooks() { return builtHooks; }
       @Override public Optional<DepositHandler> depositHandler() { return builtDepositHandler; }
       @Override public Optional<List<PagedAreaDefinition<?>>> pagedAreas() { return builtPagedAreas; }
+      @Override public Optional<MenuItem> emptySlotFiller() { return builtEmptySlotFiller; }
 
       @Override
       public String toString() {

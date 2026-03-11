@@ -8,6 +8,7 @@ version = "1.0-SNAPSHOT"
 
 dependencies {
     api("com.github.lightplugins:NexServiceRegistry:${providers.gradleProperty("registryVersion").get()}")
+    compileOnly("org.jetbrains:annotations:26.0.1")
 
     testImplementation(platform("org.junit:junit-bom:5.10.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
