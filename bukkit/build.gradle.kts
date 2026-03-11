@@ -8,7 +8,7 @@ group = "io.nexstudios.menuservice"
 version = providers.gradleProperty("serviceVersion").get()
 
 dependencies {
-    implementation(project(":common"))
+    api(project(":common"))
 
     paperweight.paperDevBundle(providers.gradleProperty("paperVersion").get())
 

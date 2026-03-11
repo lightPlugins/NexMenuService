@@ -240,6 +240,7 @@ public final class AsyncMenuRenderEngine {
     RenderResult result = bundle.result();
 
     RenderResult filtered = filterOutActiveDepositSlots(view, result);
+    filtered = filterOutStickyOverrides(view, filtered);
 
     RenderPatch patch;
     synchronized (view.renderStateLock()) {
@@ -260,6 +261,27 @@ public final class AsyncMenuRenderEngine {
     Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>(bundle.handlers());
     injectPagingNavigationHandlers(view, handlers);
     ClickHandlerStore.attach(inv, handlers);
+  }
+
+  private static RenderResult filterOutStickyOverrides(BukkitMenuView view, RenderResult input) {
+    Objects.requireNonNull(view, "view must not be null");
+    Objects.requireNonNull(input, "input must not be null");
+
+    Map<Integer, MenuItem> sticky = view.stickyOverridesSnapshot();
+    if (sticky.isEmpty()) return input;
+
+    Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
+    Set<Integer> cleared = new HashSet<>(input.clearedSlots());
+
+    // If a slot is sticky, never touch it during refresh renders:
+    // - don't override it with rendered items
+    // - don't clear it
+    for (int slot : sticky.keySet()) {
+      items.remove(slot);
+      cleared.remove(slot);
+    }
+
+    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
   }
 
   private void injectPagingNavigationHandlers(BukkitMenuView view, Map<Integer, MenuSlot.MenuClickHandler> handlers) {

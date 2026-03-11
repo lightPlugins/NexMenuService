@@ -21,6 +21,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -71,6 +72,12 @@ public final class BukkitMenuView implements MenuView {
    */
   private final AtomicReference<String> pageRenderTargetAreaId = new AtomicReference<>(null);
 
+  /**
+   * Sticky/manual slot overrides applied via click handlers.
+   * These must survive refresh renders until the view is closed.
+   */
+  private final ConcurrentMap<Integer, MenuItem> stickyOverrides = new ConcurrentHashMap<>();
+
 
   BukkitMenuView(
       BukkitMenuService service,
@@ -106,6 +113,26 @@ public final class BukkitMenuView implements MenuView {
 
   public Optional<PageState> pageState() {
     return pageState;
+  }
+
+  public Map<Integer, MenuItem> stickyOverridesSnapshot() {
+    return Map.copyOf(stickyOverrides);
+  }
+
+  public boolean isStickySlot(int slot) {
+    return stickyOverrides.containsKey(slot);
+  }
+
+  public void clearStickySlot(int slot) {
+    stickyOverrides.remove(slot);
+  }
+
+  private void setStickySlot(int slot, MenuItem itemOrNull) {
+    if (itemOrNull == null) {
+      stickyOverrides.remove(slot);
+      return;
+    }
+    stickyOverrides.put(slot, itemOrNull);
   }
 
   public void updatePageCount(String areaId, int pageCount) {
@@ -188,6 +215,8 @@ public final class BukkitMenuView implements MenuView {
   /**
    * Click-handler fast path: patch a single slot immediately (main thread),
    * and keep RenderState consistent to avoid "reverting" on the next diff.
+   *
+   * Additionally marks the slot as sticky so future refresh renders won't overwrite it.
    */
   public void patchSlotNow(int slot, MenuItem itemOrNull) {
     if (closed.get()) return;
@@ -201,6 +230,7 @@ public final class BukkitMenuView implements MenuView {
 
     if (itemOrNull == null) {
       inventory.clear(slot);
+      setStickySlot(slot, null);
       synchronized (stateLock) {
         renderState.clearSlot(slot);
       }
@@ -208,6 +238,8 @@ public final class BukkitMenuView implements MenuView {
     }
 
     inventory.setItem(slot, renderEngine.itemAdapter().toItemStack(itemOrNull));
+    setStickySlot(slot, itemOrNull);
+
     long fp = MenuItemFingerprinter.fingerprint(itemOrNull);
     synchronized (stateLock) {
       renderState.setFingerprint(slot, fp);
