@@ -34,6 +34,12 @@ public final class BukkitMenuService implements MenuService {
   private final MenuRegistry registry;
   private final BukkitMenuItemAdapter itemAdapter = new BukkitMenuItemAdapter();
 
+  private final InMemoryPageControlStateStore pageControlStateStore = new InMemoryPageControlStateStore();
+
+  public InMemoryPageControlStateStore pageControlStateStore() {
+    return pageControlStateStore;
+  }
+
   private final Map<UUID, BukkitMenuView> openViews = new ConcurrentHashMap<>();
   private final MenuInventoryListeners inventoryListeners;
   private final MenuLifecycleListeners lifecycleListeners;
@@ -142,7 +148,8 @@ public final class BukkitMenuService implements MenuService {
         def,
         inv,
         Instant.now(),
-        renderEngine
+        renderEngine,
+        pageControlStateStore
     );
 
     // schedule first auto refresh relative to now
@@ -173,5 +180,9 @@ public final class BukkitMenuService implements MenuService {
 
   public void clearViewIfSame(UUID viewerId, BukkitMenuView view) {
     openViews.remove(viewerId, view);
+  }
+
+  public void clearControlStateForViewer(UUID viewerId) {
+    pageControlStateStore.clearForViewer(viewerId);
   }
 }

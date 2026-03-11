@@ -9,6 +9,8 @@ import io.nexstudios.menuservice.bukkit.service.menu.BukkitMenuService;
 import io.nexstudios.menuservice.bukkit.service.menu.BukkitMenuView;
 import io.nexstudios.menuservice.bukkit.service.menu.ClickHandlerStore;
 import io.nexstudios.menuservice.common.api.CloseReason;
+import io.nexstudios.menuservice.common.api.MenuSlot;
+import io.nexstudios.menuservice.common.api.MenuView;
 import io.nexstudios.menuservice.common.api.ViewerRef;
 import io.nexstudios.menuservice.common.api.deposit.DepositHandler;
 import io.nexstudios.menuservice.common.api.deposit.DepositPolicy;
@@ -684,14 +686,19 @@ public final class MenuInventoryListeners implements Listener {
       ViewerRef viewer,
       int slot,
       ClickAction action
-  ) implements io.nexstudios.menuservice.common.api.MenuSlot.MenuClickContext {
+  ) implements MenuSlot.MenuClickContext {
 
     @Override public boolean isTopInventory() { return true; }
     @Override public boolean isBottomInventory() { return false; }
 
     @Override
+    public BukkitMenuView view() {
+      return view;
+    }
+
+    @Override
     public void setCurrentItem(MenuItem item) {
-      io.nexstudios.menuservice.common.api.MenuSlot.requireNonNullItem(item);
+      MenuSlot.requireNonNullItem(item);
       view.patchSlotNow(slot, item);
     }
 

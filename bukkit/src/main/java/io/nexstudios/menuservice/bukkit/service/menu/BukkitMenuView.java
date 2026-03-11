@@ -13,6 +13,7 @@ import io.nexstudios.menuservice.common.api.deposit.DepositLedger;
 import io.nexstudios.menuservice.common.api.deposit.DepositReturnStrategy;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.page.PageState;
+import io.nexstudios.menuservice.common.api.page.control.PageControlStateStore;
 import io.nexstudios.menuservice.common.api.render.MenuItemFingerprinter;
 import io.nexstudios.menuservice.common.api.render.RenderReason;
 import io.nexstudios.menuservice.common.api.render.RenderState;
@@ -79,6 +80,8 @@ public final class BukkitMenuView implements MenuView {
    */
   private final ConcurrentMap<Integer, MenuItem> stickyOverrides = new ConcurrentHashMap<>();
 
+  private final PageControlStateStore pageControlStateStore;
+
 
   BukkitMenuView(
       BukkitMenuService service,
@@ -87,7 +90,8 @@ public final class BukkitMenuView implements MenuView {
       MenuDefinition definition,
       Inventory inventory,
       Instant openedAt,
-      AsyncMenuRenderEngine renderEngine
+      AsyncMenuRenderEngine renderEngine,
+      PageControlStateStore pageControlStateStore
   ) {
     this.service = Objects.requireNonNull(service, "service must not be null");
     this.key = Objects.requireNonNull(key, "key must not be null");
@@ -96,6 +100,7 @@ public final class BukkitMenuView implements MenuView {
     this.inventory = Objects.requireNonNull(inventory, "inventory must not be null");
     this.openedAt = Objects.requireNonNull(openedAt, "openedAt must not be null");
     this.renderEngine = Objects.requireNonNull(renderEngine, "renderEngine must not be null");
+    this.pageControlStateStore = Objects.requireNonNull(pageControlStateStore, "pageControlStateStore must not be null");
 
     this.depositLedger = definition.interactionPolicy().depositPolicy().isPresent()
         ? Optional.of(new BukkitDepositLedger())
@@ -106,6 +111,17 @@ public final class BukkitMenuView implements MenuView {
     this.pageState = definition.pagedAreas().isPresent()
         ? Optional.of(new PageState())
         : Optional.empty();
+  }
+
+  public PageControlStateStore pageControlStateStore() {
+    return pageControlStateStore;
+  }
+
+  @Override
+  public void requestPagedAreaRefresh(String areaId) {
+    if (closed.get()) return;
+    targetPageAreaRender(areaId);
+    requestRender(RenderReason.PAGE_CHANGED);
   }
 
   public Optional<DepositLedger> depositLedger() {

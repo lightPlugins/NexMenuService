@@ -8,6 +8,10 @@ import io.nexstudios.menuservice.common.api.MenuPopulator;
 import io.nexstudios.menuservice.common.api.deposit.DepositHandler;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.page.PagedAreaDefinition;
+import io.nexstudios.menuservice.common.api.page.control.PageControlBinding;
+import io.nexstudios.menuservice.common.api.page.control.PageControlButton;
+import io.nexstudios.menuservice.common.api.page.control.PageFilterControl;
+import io.nexstudios.menuservice.common.api.page.control.PageSortControl;
 import org.jetbrains.annotations.Nullable;
 
 import java.time.Duration;
@@ -42,10 +46,38 @@ public final class MenuDefinitionBuilder {
   @Nullable
   private MenuItem emptySlotFiller;
 
+  private final List<PageControlBinding> pageControls = new ArrayList<>();
+  private final List<PageControlButton> pageControlButtons = new ArrayList<>();
+
   private boolean decorationsEnabled = true;
 
   public static MenuDefinitionBuilder create() {
     return new MenuDefinitionBuilder();
+  }
+
+  public <T> MenuDefinitionBuilder addFilterControl(String areaId, PageFilterControl<T> control) {
+    this.pageControls.add(new PageControlBinding(areaId, Objects.requireNonNull(control, "control must not be null")));
+    return this;
+  }
+
+  public <T> MenuDefinitionBuilder addSortControl(String areaId, PageSortControl<T> control) {
+    this.pageControls.add(new PageControlBinding(areaId, Objects.requireNonNull(control, "control must not be null")));
+    return this;
+  }
+
+  public MenuDefinitionBuilder addControlButton(PageControlButton button) {
+    this.pageControlButtons.add(Objects.requireNonNull(button, "button must not be null"));
+    return this;
+  }
+
+  public MenuDefinitionBuilder clearPageControls() {
+    this.pageControls.clear();
+    return this;
+  }
+
+  public MenuDefinitionBuilder clearControlButtons() {
+    this.pageControlButtons.clear();
+    return this;
   }
 
   public MenuDefinitionBuilder key(MenuKey key) {
@@ -162,6 +194,12 @@ public final class MenuDefinitionBuilder {
     final Optional<List<PagedAreaDefinition<?>>> builtPagedAreas =
         pagedAreas.isEmpty() ? Optional.empty() : Optional.of(List.copyOf(pagedAreas));
 
+    final Optional<List<PageControlBinding>> builtControls =
+        pageControls.isEmpty() ? Optional.empty() : Optional.of(List.copyOf(pageControls));
+
+    final Optional<List<PageControlButton>> builtButtons =
+        pageControlButtons.isEmpty() ? Optional.empty() : Optional.of(List.copyOf(pageControlButtons));
+
     final Optional<MenuItem> builtEmptySlotFiller = Optional.ofNullable(emptySlotFiller);
 
     final boolean builtDecorationsEnabled = decorationsEnabled;
@@ -175,7 +213,15 @@ public final class MenuDefinitionBuilder {
       @Override public MenuPopulator populator() { return builtPopulator; }
       @Override public Optional<MenuInteractionHooks> interactionHooks() { return builtHooks; }
       @Override public Optional<DepositHandler> depositHandler() { return builtDepositHandler; }
-      @Override public Optional<List<PagedAreaDefinition<?>>> pagedAreas() { return builtPagedAreas; }
+      @Override
+      public Optional<List<PagedAreaDefinition<?>>> pagedAreas() { return builtPagedAreas; }
+
+      @Override
+      public Optional<List<PageControlBinding>> pageControls() { return builtControls; }
+
+      @Override
+      public Optional<List<PageControlButton>> pageControlButtons() { return builtButtons; }
+
       @Override public Optional<MenuItem> emptySlotFiller() { return builtEmptySlotFiller; }
 
       @Override

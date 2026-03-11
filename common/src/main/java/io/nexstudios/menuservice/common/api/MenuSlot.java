@@ -38,6 +38,11 @@ public interface MenuSlot {
     boolean isBottomInventory();
 
     /**
+     * The current open view (top inventory menu view).
+     */
+    MenuView view();
+
+    /**
      * Sets/replaces the clicked slot item (top inventory).
      */
     void setCurrentItem(MenuItem item);

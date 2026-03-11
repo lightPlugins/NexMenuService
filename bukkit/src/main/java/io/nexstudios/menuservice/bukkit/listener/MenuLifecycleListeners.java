@@ -41,5 +41,8 @@ public final class MenuLifecycleListeners implements Listener {
     if (view != null) {
       view.close(CloseReason.PLAYER_DISCONNECTED);
     }
+
+    // Runtime-only: cleanup control state on quit
+    service.clearControlStateForViewer(id);
   }
 }

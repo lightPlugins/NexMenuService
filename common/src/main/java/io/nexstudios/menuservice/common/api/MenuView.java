@@ -19,6 +19,14 @@ public interface MenuView {
   void requestRefresh();
 
   /**
+   * Optional: request to re-render only a paged area.
+   * Default fallback: full refresh.
+   */
+  default void requestPagedAreaRefresh(String areaId) {
+    requestRefresh();
+  }
+
+  /**
    * Closes the view.
    */
   void close(CloseReason reason);

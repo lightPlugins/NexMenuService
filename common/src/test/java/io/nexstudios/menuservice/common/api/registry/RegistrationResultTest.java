@@ -1,9 +1,14 @@
 package io.nexstudios.menuservice.common.api.registry;
 
-import io.nexstudios.menuservice.common.api.MenuDefinition;
-import io.nexstudios.menuservice.common.api.MenuKey;
+import io.nexstudios.menuservice.common.api.*;
+import io.nexstudios.menuservice.common.api.deposit.DepositHandler;
+import io.nexstudios.menuservice.common.api.item.MenuItem;
+import io.nexstudios.menuservice.common.api.page.PagedAreaDefinition;
+import io.nexstudios.menuservice.common.api.page.control.PageControlBinding;
+import io.nexstudios.menuservice.common.api.page.control.PageControlButton;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -27,12 +32,27 @@ class RegistrationResultTest {
       @Override public MenuKey key() { return key; }
       @Override public String title() { return "x"; }
       @Override public int rows() { return 1; }
-      @Override public java.util.Optional<java.time.Duration> refreshInterval() { return java.util.Optional.empty(); }
-      @Override public io.nexstudios.menuservice.common.api.InteractionPolicy interactionPolicy() { throw new UnsupportedOperationException(); }
-      @Override public io.nexstudios.menuservice.common.api.MenuPopulator populator() { throw new UnsupportedOperationException(); }
-      @Override public java.util.Optional<io.nexstudios.menuservice.common.api.MenuInteractionHooks> interactionHooks() { return java.util.Optional.empty(); }
-      @Override public java.util.Optional<io.nexstudios.menuservice.common.api.deposit.DepositHandler> depositHandler() { return java.util.Optional.empty(); }
-      @Override public java.util.Optional<java.util.List<io.nexstudios.menuservice.common.api.page.PagedAreaDefinition<?>>> pagedAreas() { return java.util.Optional.empty(); }
+      @Override public Optional<java.time.Duration> refreshInterval() { return java.util.Optional.empty(); }
+      @Override public InteractionPolicy interactionPolicy() { throw new UnsupportedOperationException(); }
+      @Override public MenuPopulator populator() { throw new UnsupportedOperationException(); }
+      @Override public Optional<MenuInteractionHooks> interactionHooks() { return Optional.empty(); }
+      @Override public Optional<DepositHandler> depositHandler() { return Optional.empty(); }
+      @Override public Optional<List<PagedAreaDefinition<?>>> pagedAreas() { return Optional.empty(); }
+
+      @Override
+      public Optional<List<PageControlBinding>> pageControls() {
+        return Optional.empty();
+      }
+
+      @Override
+      public Optional<List<PageControlButton>> pageControlButtons() {
+        return Optional.empty();
+      }
+
+      @Override
+      public Optional<MenuItem> emptySlotFiller() {
+        return Optional.empty();
+      }
     };
 
     RegistrationResult r = RegistrationResult.replaced(key, prev);
@@ -56,12 +76,27 @@ class RegistrationResultTest {
           @Override public MenuKey key() { return key; }
           @Override public String title() { return "x"; }
           @Override public int rows() { return 1; }
-          @Override public java.util.Optional<java.time.Duration> refreshInterval() { return java.util.Optional.empty(); }
-          @Override public io.nexstudios.menuservice.common.api.InteractionPolicy interactionPolicy() { throw new UnsupportedOperationException(); }
-          @Override public io.nexstudios.menuservice.common.api.MenuPopulator populator() { throw new UnsupportedOperationException(); }
-          @Override public java.util.Optional<io.nexstudios.menuservice.common.api.MenuInteractionHooks> interactionHooks() { return java.util.Optional.empty(); }
-          @Override public java.util.Optional<io.nexstudios.menuservice.common.api.deposit.DepositHandler> depositHandler() { return java.util.Optional.empty(); }
-          @Override public java.util.Optional<java.util.List<io.nexstudios.menuservice.common.api.page.PagedAreaDefinition<?>>> pagedAreas() { return java.util.Optional.empty(); }
+          @Override public Optional<java.time.Duration> refreshInterval() { return Optional.empty(); }
+          @Override public InteractionPolicy interactionPolicy() { throw new UnsupportedOperationException(); }
+          @Override public MenuPopulator populator() { throw new UnsupportedOperationException(); }
+          @Override public Optional<MenuInteractionHooks> interactionHooks() { return Optional.empty(); }
+          @Override public Optional<DepositHandler> depositHandler() { return Optional.empty(); }
+          @Override public Optional<List<PagedAreaDefinition<?>>> pagedAreas() { return Optional.empty(); }
+
+          @Override
+          public Optional<List<PageControlBinding>> pageControls() {
+            return Optional.empty();
+          }
+
+          @Override
+          public Optional<List<PageControlButton>> pageControlButtons() {
+            return java.util.Optional.empty();
+          }
+
+          @Override
+          public Optional<MenuItem> emptySlotFiller() {
+            return Optional.empty();
+          }
         }))
     );
 

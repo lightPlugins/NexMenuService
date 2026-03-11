@@ -3,6 +3,8 @@ package io.nexstudios.menuservice.common.api;
 import io.nexstudios.menuservice.common.api.deposit.DepositHandler;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.page.PagedAreaDefinition;
+import io.nexstudios.menuservice.common.api.page.control.PageControlBinding;
+import io.nexstudios.menuservice.common.api.page.control.PageControlButton;
 
 import java.time.Duration;
 import java.util.List;
@@ -36,6 +38,16 @@ public interface MenuDefinition {
    * Optional list of paged areas declared for this menu.
    */
   Optional<List<PagedAreaDefinition<?>>> pagedAreas();
+
+  /**
+   * Optional page controls (filters/sorts) bound to paged areas.
+   */
+  Optional<List<PageControlBinding>> pageControls();
+
+  /**
+   * Optional UI buttons for controls.
+   */
+  Optional<List<PageControlButton>> pageControlButtons();
 
   /**
    * Optional filler item for empty slots.

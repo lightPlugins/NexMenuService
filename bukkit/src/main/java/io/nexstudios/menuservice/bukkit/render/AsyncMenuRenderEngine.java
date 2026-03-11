@@ -28,6 +28,11 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
+import io.nexstudios.menuservice.common.api.page.control.PageControlBinding;
+import io.nexstudios.menuservice.common.api.page.control.PageControlButton;
+import io.nexstudios.menuservice.common.api.page.control.PageControlStateStore;
+import io.nexstudios.menuservice.common.api.page.control.PageFilterControl;
+import io.nexstudios.menuservice.common.api.page.control.PageSortControl;
 
 /**
  * Async render -> diff -> main-thread apply pipeline.
@@ -116,14 +121,19 @@ public final class AsyncMenuRenderEngine {
 
     PagingBundle paging = renderPaging(view, pageTarget);
 
+    // NEW: render control buttons (optional)
+    ButtonBundle buttons = renderControlButtons(view);
+
     RenderResult base = ctx.toRenderResult();
     RenderResult merged = merge(base, paging.result());
+    merged = merge(merged, buttons.result());
 
     merged = injectDefaultPagingNavItemsIfEmpty(view, merged);
     merged = applyEmptySlotFiller(def, size, merged);
 
     Map<Integer, MenuSlot.MenuClickHandler> mergedHandlers = new HashMap<>(ctx.clickHandlers());
     mergedHandlers.putAll(paging.handlers());
+    mergedHandlers.putAll(buttons.handlers());
 
     return new RenderBundle(merged, Map.copyOf(mergedHandlers));
   }
@@ -207,6 +217,10 @@ public final class AsyncMenuRenderEngine {
     Set<Integer> cleared = new HashSet<>();
     Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>();
 
+    // NEW: controls snapshot per definition
+    List<PageControlBinding> controls = view.definition().pageControls().orElse(List.of());
+    PageControlStateStore stateStore = view.pageControlStateStore();
+
     for (PagedAreaDefinition<?> raw : pagedOpt.get()) {
       if (targetAreaId.isPresent() && !raw.id().equals(targetAreaId.get())) {
         continue;
@@ -215,7 +229,10 @@ public final class AsyncMenuRenderEngine {
       @SuppressWarnings("unchecked")
       PagedAreaDefinition<Object> area = (PagedAreaDefinition<Object>) raw;
 
-      List<Object> elements = area.load(view.key(), view.viewer());
+      List<Object> elements = new ArrayList<>(area.load(view.key(), view.viewer()));
+
+      // NEW: apply filters then sorts for this area
+      elements = applyControlsForArea(controls, stateStore, view, area.id(), elements);
 
       PageModel model = area.model();
       int pageCount = model.pageCountFor(elements.size());
@@ -232,10 +249,12 @@ public final class AsyncMenuRenderEngine {
       cleared.addAll(page.clearedSlots());
 
       // Build click handlers for the currently rendered slice (if configured)
+      final List<Object> finalElements = elements;
+
       area.clickHandler().ifPresent(ch -> {
         int start = model.startIndex(clampedIndex);
-        int end = model.endExclusiveIndex(clampedIndex, elements.size());
-        List<Object> slice = elements.subList(start, end);
+        int end = model.endExclusiveIndex(clampedIndex, finalElements.size());
+        List<Object> slice = finalElements.subList(start, end);
 
         List<Integer> targetSlots = PageSlotMapper.slotsFor(area.bounds(), slice.size());
         for (int i = 0; i < slice.size(); i++) {
@@ -250,6 +269,107 @@ public final class AsyncMenuRenderEngine {
 
     return new PagingBundle(
         new RenderResult(Map.copyOf(items), Set.copyOf(cleared)),
+        Map.copyOf(handlers)
+    );
+  }
+
+  private static List<Object> applyControlsForArea(
+      List<PageControlBinding> controls,
+      PageControlStateStore stateStore,
+      BukkitMenuView view,
+      String areaId,
+      List<Object> elements
+  ) {
+    if (controls == null || controls.isEmpty()) return elements;
+
+    // 1) Filters
+    for (PageControlBinding b : controls) {
+      if (!b.areaId().equals(areaId)) continue;
+      if (!(b.control() instanceof PageFilterControl<?> filterRaw)) continue;
+
+      @SuppressWarnings("unchecked")
+      PageFilterControl<Object> filter = (PageFilterControl<Object>) filterRaw;
+
+      String modeId = stateStore
+          .getActiveModeId(view.viewer(), view.key(), areaId, filter.controlId())
+          .orElse(filter.defaultModeId());
+
+      var pred = filter.predicateFor(modeId, view.key(), view.viewer());
+      elements = elements.stream().filter(pred).toList();
+    }
+
+    // 2) Sorts (stable chaining in registration order; external can control order by how they add controls)
+    java.util.Comparator<Object> combined = null;
+
+    for (PageControlBinding b : controls) {
+      if (!b.areaId().equals(areaId)) continue;
+      if (!(b.control() instanceof PageSortControl<?> sortRaw)) continue;
+
+      @SuppressWarnings("unchecked")
+      PageSortControl<Object> sort = (PageSortControl<Object>) sortRaw;
+
+      String modeId = stateStore
+          .getActiveModeId(view.viewer(), view.key(), areaId, sort.controlId())
+          .orElse(sort.defaultModeId());
+
+      java.util.Comparator<Object> cmp = sort.comparatorFor(modeId, view.key(), view.viewer());
+      combined = (combined == null) ? cmp : combined.thenComparing(cmp);
+    }
+
+    if (combined != null) {
+      elements = elements.stream().sorted(combined).toList();
+    }
+
+    return elements;
+  }
+
+  private ButtonBundle renderControlButtons(BukkitMenuView view) {
+    var buttonsOpt = view.definition().pageControlButtons();
+    if (buttonsOpt.isEmpty()) return ButtonBundle.empty();
+
+    List<PageControlBinding> controls = view.definition().pageControls().orElse(List.of());
+    PageControlStateStore stateStore = view.pageControlStateStore();
+
+    Map<Integer, MenuItem> items = new HashMap<>();
+    Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>();
+
+    for (PageControlButton btn : buttonsOpt.get()) {
+      // find control
+      PageControlBinding binding = null;
+      for (PageControlBinding b : controls) {
+        if (!b.areaId().equals(btn.areaId())) continue;
+        if (!b.controlId().equals(btn.controlId())) continue;
+        binding = b;
+        break;
+      }
+      if (binding == null) continue;
+
+      var control = binding.control();
+      var activeModeId = stateStore.getActiveModeId(view.viewer(), view.key(), btn.areaId(), control.controlId());
+
+      // render item
+      var item = btn.render(new PageControlButton.RenderContext(
+          view.key(),
+          view.viewer(),
+          btn.areaId(),
+          control,
+          activeModeId
+      ));
+      items.put(btn.slot(), item);
+
+      // click handler
+      handlers.put(btn.slot(), ctx -> btn.onClick(new PageControlButton.ClickContext(
+          ctx.view(),
+          view.key(),
+          view.viewer(),
+          btn.areaId(),
+          control,
+          stateStore
+      )));
+    }
+
+    return new ButtonBundle(
+        new RenderResult(Map.copyOf(items), Set.of()),
         Map.copyOf(handlers)
     );
   }
@@ -415,6 +535,17 @@ public final class AsyncMenuRenderEngine {
 
     static PagingBundle empty() {
       return new PagingBundle(RenderResult.empty(), Map.of());
+    }
+  }
+
+  private record ButtonBundle(RenderResult result, Map<Integer, MenuSlot.MenuClickHandler> handlers) {
+    private ButtonBundle {
+      Objects.requireNonNull(result, "result must not be null");
+      Objects.requireNonNull(handlers, "handlers must not be null");
+    }
+
+    static ButtonBundle empty() {
+      return new ButtonBundle(RenderResult.empty(), Map.of());
     }
   }
 }
