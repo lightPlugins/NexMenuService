@@ -1,6 +1,6 @@
 package io.nexstudios.menuservice.bukkit.service.menu;
 
-import io.nexstudios.menuservice.bukkit.adapter.BukkitMenuItemAdapter;
+import io.nexstudios.menuservice.bukkit.interaction.ClickThrottler;
 import io.nexstudios.menuservice.bukkit.inventory.PaperMenuHolder;
 import io.nexstudios.menuservice.bukkit.listener.MenuInventoryListeners;
 import io.nexstudios.menuservice.bukkit.listener.MenuLifecycleListeners;
@@ -32,9 +32,10 @@ public final class BukkitMenuService implements MenuService {
 
   private final Plugin plugin;
   private final MenuRegistry registry;
-  private final BukkitMenuItemAdapter itemAdapter = new BukkitMenuItemAdapter();
 
   private final InMemoryPageControlStateStore pageControlStateStore = new InMemoryPageControlStateStore();
+  // Smart GUI throttling: allow up to 5 actions/sec; if exceeded => 750ms cooldown
+  private final ClickThrottler clickThrottler = new ClickThrottler(5, 1000L, 750L);
 
   public InMemoryPageControlStateStore pageControlStateStore() {
     return pageControlStateStore;
@@ -52,10 +53,18 @@ public final class BukkitMenuService implements MenuService {
     this.plugin = Objects.requireNonNull(plugin, "plugin must not be null");
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
 
-    this.renderEngine = new AsyncMenuRenderEngine(plugin, itemAdapter);
+    this.renderEngine = new AsyncMenuRenderEngine(plugin);
 
-    this.inventoryListeners = new MenuInventoryListeners(this, itemAdapter);
+    this.inventoryListeners = new MenuInventoryListeners(this);
     this.lifecycleListeners = new MenuLifecycleListeners(this, plugin);
+  }
+
+  public boolean allowGuiInteraction(UUID viewerId) {
+    return clickThrottler.allow(viewerId, System.currentTimeMillis());
+  }
+
+  public void clearThrottleForViewer(UUID viewerId) {
+    clickThrottler.clear(viewerId);
   }
 
   public void bootstrap() {
@@ -184,5 +193,7 @@ public final class BukkitMenuService implements MenuService {
 
   public void clearControlStateForViewer(UUID viewerId) {
     pageControlStateStore.clearForViewer(viewerId);
+    clearThrottleForViewer(viewerId);
   }
+
 }

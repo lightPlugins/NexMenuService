@@ -1,7 +1,6 @@
 package io.nexstudios.menuservice.bukkit.listener;
 
 import io.nexstudios.menuservice.bukkit.adapter.BukkitItemSnapshotAdapter;
-import io.nexstudios.menuservice.bukkit.adapter.BukkitMenuItemAdapter;
 import io.nexstudios.menuservice.bukkit.interaction.BukkitInteractionMapper;
 import io.nexstudios.menuservice.bukkit.interaction.SimpleInteractionContext;
 import io.nexstudios.menuservice.bukkit.inventory.PaperMenuHolder;
@@ -10,7 +9,6 @@ import io.nexstudios.menuservice.bukkit.service.menu.BukkitMenuView;
 import io.nexstudios.menuservice.bukkit.service.menu.ClickHandlerStore;
 import io.nexstudios.menuservice.common.api.CloseReason;
 import io.nexstudios.menuservice.common.api.MenuSlot;
-import io.nexstudios.menuservice.common.api.MenuView;
 import io.nexstudios.menuservice.common.api.ViewerRef;
 import io.nexstudios.menuservice.common.api.deposit.DepositHandler;
 import io.nexstudios.menuservice.common.api.deposit.DepositPolicy;
@@ -18,6 +16,8 @@ import io.nexstudios.menuservice.common.api.interaction.ClickAction;
 import io.nexstudios.menuservice.common.api.interaction.DragAction;
 import io.nexstudios.menuservice.common.api.interaction.InventoryArea;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
+import net.kyori.adventure.key.Key;
+import net.kyori.adventure.sound.Sound;
 import org.bukkit.Material;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -38,14 +38,12 @@ import java.util.Set;
 public final class MenuInventoryListeners implements Listener {
 
   private final BukkitMenuService service;
-  private final BukkitMenuItemAdapter itemAdapter;
 
   private final BukkitItemSnapshotAdapter snapshotAdapter = new BukkitItemSnapshotAdapter();
   private final BukkitInteractionMapper interactionMapper = new BukkitInteractionMapper(snapshotAdapter);
 
-  public MenuInventoryListeners(BukkitMenuService service, BukkitMenuItemAdapter itemAdapter) {
+  public MenuInventoryListeners(BukkitMenuService service) {
     this.service = Objects.requireNonNull(service, "service must not be null");
-    this.itemAdapter = Objects.requireNonNull(itemAdapter, "itemAdapter must not be null");
   }
 
   @EventHandler
@@ -55,6 +53,15 @@ public final class MenuInventoryListeners implements Listener {
 
     BukkitMenuView view = service.findOpenView(holder.viewerId());
     if (view == null || view.isClosed()) {
+      event.setCancelled(true);
+      return;
+    }
+
+    // Smart throttling: ignore spam clicks (but keep event cancelled inside menus)
+    if (!service.allowGuiInteraction(holder.viewerId())) {
+      event.getWhoClicked().playSound(
+          Sound.sound(Key.key("entity.villager.no"), Sound.Source.UI, 1f, 1f),
+          Sound.Emitter.self());
       event.setCancelled(true);
       return;
     }
@@ -348,6 +355,15 @@ public final class MenuInventoryListeners implements Listener {
       return;
     }
 
+    // Smart throttling for drag as well (prevents spam-drag floods)
+    if (!service.allowGuiInteraction(holder.viewerId())) {
+      event.getWhoClicked().playSound(
+          Sound.sound(Key.key("entity.villager.no"), Sound.Source.UI, 1f, 1f),
+          Sound.Emitter.self());
+      event.setCancelled(true);
+      return;
+    }
+
     int topSize = top.getSize();
     boolean affectsTop = event.getRawSlots().stream().anyMatch(rawSlot -> rawSlot >= 0 && rawSlot < topSize);
 
@@ -426,11 +442,11 @@ public final class MenuInventoryListeners implements Listener {
       MenuItem resulting = decision.resultingItem().orElse(offered);
 
       ItemStack current = top.getItem(slot);
-      ItemStack resultStack = itemAdapter.toItemStack(resulting);
+      ItemStack resultStack = resulting.stack();
       if (!canPlaceOrStack(current, resultStack)) return false;
 
       resultingBySlot.put(slot, resulting);
-      totalPlaced += Math.max(0, resulting.amount());
+      totalPlaced += Math.max(0, resulting.stack().getAmount());
     }
 
     if (resultingBySlot.isEmpty()) return false;
@@ -440,7 +456,7 @@ public final class MenuInventoryListeners implements Listener {
       MenuItem resulting = e.getValue();
 
       ItemStack current = top.getItem(slot);
-      ItemStack toPlace = itemAdapter.toItemStack(resulting);
+      ItemStack toPlace = resulting.stack();
 
       if (isEmpty(current)) {
         view.patchSlotNow(slot, resulting);
@@ -454,7 +470,6 @@ public final class MenuInventoryListeners implements Listener {
       view.depositLedger().ifPresent(ledger -> ledger.recordDeposit(slot, resulting));
     }
 
-    // Cursor update – use view cursor setter (non-deprecated)
     int remaining = Math.max(0, oldCursor.getAmount() - totalPlaced);
     if (remaining == 0) {
       setViewCursor(event.getView(), new ItemStack(Material.AIR));
@@ -517,8 +532,7 @@ public final class MenuInventoryListeners implements Listener {
 
     MenuItem resulting = decision.resultingItem().orElse(offered);
 
-    // Apply into inventory: stack if similar
-    ItemStack resultingStack = itemAdapter.toItemStack(resulting);
+    ItemStack resultingStack = resulting.stack();
     if (isEmpty(current)) {
       view.patchSlotNow(slot, resulting);
     } else {
@@ -530,7 +544,7 @@ public final class MenuInventoryListeners implements Listener {
     }
 
     view.depositLedger().ifPresent(ledger -> ledger.recordDeposit(slot, resulting));
-    return resulting.amount();
+    return resulting.stack().getAmount();
   }
 
   private boolean tryRemoveFromSlotToCursor(

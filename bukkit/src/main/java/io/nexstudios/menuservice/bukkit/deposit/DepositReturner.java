@@ -1,6 +1,5 @@
 package io.nexstudios.menuservice.bukkit.deposit;
 
-import io.nexstudios.menuservice.bukkit.adapter.BukkitMenuItemAdapter;
 import io.nexstudios.menuservice.common.api.deposit.DepositEntry;
 import io.nexstudios.menuservice.common.api.deposit.DepositLedgerSnapshot;
 import io.nexstudios.menuservice.common.api.deposit.DepositReturnStrategy;
@@ -13,11 +12,7 @@ import java.util.Objects;
 
 public final class DepositReturner {
 
-  private final BukkitMenuItemAdapter itemAdapter;
-
-  public DepositReturner(BukkitMenuItemAdapter itemAdapter) {
-    this.itemAdapter = Objects.requireNonNull(itemAdapter, "itemAdapter must not be null");
-  }
+  public DepositReturner() {}
 
   public void returnDeposits(Player player, DepositLedgerSnapshot snapshot, DepositReturnStrategy strategy) {
     Objects.requireNonNull(player, "player must not be null");
@@ -29,7 +24,7 @@ public final class DepositReturner {
     Location loc = player.getLocation();
 
     for (DepositEntry entry : snapshot.entries()) {
-      ItemStack stack = itemAdapter.toItemStack(entry.item());
+      ItemStack stack = entry.item().stack().clone();
 
       switch (strategy) {
         case INVENTORY_THEN_DROP -> {

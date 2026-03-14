@@ -1,7 +1,7 @@
 package io.nexstudios.menuservice.common.api.page;
 
-import io.nexstudios.menuservice.common.api.item.MenuItem;
-import io.nexstudios.menuservice.common.api.render.RenderResult;
+import io.nexstudios.menuservice.common.api.item.MenuItemSupplier;
+import io.nexstudios.menuservice.common.api.render.RenderPlan;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -16,7 +16,7 @@ public final class PageRenderer {
 
   private PageRenderer() {}
 
-  public static <T> RenderResult renderPage(
+  public static <T> RenderPlan renderPage(
       PagedAreaDefinition<T> definition,
       int pageIndex,
       List<T> allElements
@@ -34,13 +34,12 @@ public final class PageRenderer {
 
     List<Integer> targetSlots = PageSlotMapper.slotsFor(definition.bounds(), slice.size());
 
-    Map<Integer, MenuItem> items = new HashMap<>();
+    Map<Integer, MenuItemSupplier> items = new HashMap<>();
     for (int i = 0; i < slice.size(); i++) {
       T element = slice.get(i);
       items.put(targetSlots.get(i), definition.renderer().render(element, start + i));
     }
 
-    // Clear remaining capacity slots inside the bounds if the current page has fewer items.
     int capacity = definition.bounds().capacity();
     List<Integer> capacitySlots = PageSlotMapper.slotsFor(definition.bounds(), capacity);
 
@@ -49,6 +48,6 @@ public final class PageRenderer {
       cleared.add(capacitySlots.get(i));
     }
 
-    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
+    return new RenderPlan(Map.copyOf(items), Set.copyOf(cleared));
   }
 }

@@ -1,67 +1,42 @@
 package io.nexstudios.menuservice.common.api.item;
 
-import java.util.List;
-import java.util.Map;
+import org.bukkit.Material;
+import org.bukkit.inventory.ItemStack;
+
 import java.util.Objects;
-import java.util.OptionalInt;
 
 /**
- * Immutable, platform-agnostic item model for menus.
+ * Bukkit-bound menu item.
+ *
+ * This type intentionally wraps a Bukkit ItemStack.
  */
-public record MenuItem(
-    String materialKey,
-    int amount,
-    OptionalInt customModelData,
-    String displayName,
-    List<String> lore,
-    Map<String, Integer> enchantments,
-    boolean unbreakable,
-    int hideFlagsBitset
-) {
+public record MenuItem(ItemStack stack) {
 
   public MenuItem {
-    Objects.requireNonNull(materialKey, "materialKey must not be null");
-    Objects.requireNonNull(customModelData, "customModelData must not be null");
-    Objects.requireNonNull(lore, "lore must not be null");
-    Objects.requireNonNull(enchantments, "enchantments must not be null");
-
-    requireNamespacedKey(materialKey, "materialKey");
-
-    if (amount < 1) throw new IllegalArgumentException("amount must be >= 1");
-    if (amount > 64) throw new IllegalArgumentException("amount must be <= 64");
-
-    if (displayName != null && displayName.isBlank()) {
-      throw new IllegalArgumentException("displayName must not be blank when provided");
+    Objects.requireNonNull(stack, "stack must not be null");
+    if (stack.getType().isAir()) {
+      throw new IllegalArgumentException("stack must not be AIR");
     }
+    if (stack.getAmount() < 1) {
+      throw new IllegalArgumentException("stack amount must be >= 1");
+    }
+
+    // Snapshot: do not retain caller-owned mutable instance
+    stack = stack.clone();
   }
 
-  public static MenuItemBuilder builder(String materialKey) {
-    return new MenuItemBuilder(materialKey);
+  @Override
+  public ItemStack stack() {
+    // Defensive copy: do not leak internal mutable state
+    return stack.clone();
   }
 
-  public static MenuItem of(String materialKey) {
-    return builder(materialKey).build();
+  public static MenuItem of(ItemStack stack) {
+    return new MenuItem(stack);
   }
 
-  static void requireNamespacedKey(String key, String fieldName) {
-    if (key.isBlank()) throw new IllegalArgumentException(fieldName + " must not be blank");
-    if (key.chars().anyMatch(Character::isWhitespace)) {
-      throw new IllegalArgumentException(fieldName + " must not contain whitespace");
-    }
-
-    int colon = key.indexOf(':');
-    if (colon <= 0 || colon == key.length() - 1) {
-      throw new IllegalArgumentException(fieldName + " must be a namespaced key in the form 'namespace:value'");
-    }
-    if (key.indexOf(':', colon + 1) != -1) {
-      throw new IllegalArgumentException(fieldName + " must contain exactly one ':'");
-    }
-
-    String namespace = key.substring(0, colon);
-    String value = key.substring(colon + 1);
-
-    if (namespace.isBlank() || value.isBlank()) {
-      throw new IllegalArgumentException(fieldName + " must be a namespaced key in the form 'namespace:value'");
-    }
+  public static MenuItem of(Material material) {
+    Objects.requireNonNull(material, "material must not be null");
+    return new MenuItem(new ItemStack(material, 1));
   }
 }

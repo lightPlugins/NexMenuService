@@ -106,7 +106,7 @@ public final class BukkitMenuView implements MenuView {
         ? Optional.of(new BukkitDepositLedger())
         : Optional.empty();
 
-    this.depositReturner = new DepositReturner(renderEngine.itemAdapter());
+    this.depositReturner = new DepositReturner();
 
     this.pageState = definition.pagedAreas().isPresent()
         ? Optional.of(new PageState())
@@ -261,7 +261,7 @@ public final class BukkitMenuView implements MenuView {
       return;
     }
 
-    inventory.setItem(slot, renderEngine.itemAdapter().toItemStack(itemOrNull));
+    inventory.setItem(slot, itemOrNull.stack());
     setStickySlot(slot, itemOrNull);
 
     long fp = MenuItemFingerprinter.fingerprint(itemOrNull);

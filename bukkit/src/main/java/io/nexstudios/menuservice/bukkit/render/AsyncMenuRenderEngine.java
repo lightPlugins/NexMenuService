@@ -1,21 +1,32 @@
 package io.nexstudios.menuservice.bukkit.render;
 
-
-import io.nexstudios.menuservice.bukkit.adapter.BukkitMenuItemAdapter;
 import io.nexstudios.menuservice.bukkit.service.menu.BukkitMenuView;
 import io.nexstudios.menuservice.bukkit.service.menu.ClickHandlerStore;
 import io.nexstudios.menuservice.common.api.MenuDefinition;
-import io.nexstudios.menuservice.common.api.MenuSlot;
 import io.nexstudios.menuservice.common.api.MenuDefaults;
-import io.nexstudios.menuservice.common.api.page.*;
+import io.nexstudios.menuservice.common.api.MenuSlot;
 import io.nexstudios.menuservice.common.api.deposit.DepositLedger;
 import io.nexstudios.menuservice.common.api.deposit.DepositPolicy;
+import io.nexstudios.menuservice.common.api.item.MenuItem;
+import io.nexstudios.menuservice.common.api.item.MenuItemSupplier;
+import io.nexstudios.menuservice.common.api.page.PageRenderer;
+import io.nexstudios.menuservice.common.api.page.PageSlotMapper;
+import io.nexstudios.menuservice.common.api.page.PagedAreaDefinition;
+import io.nexstudios.menuservice.common.api.page.PageState;
+import io.nexstudios.menuservice.common.api.page.control.PageControlBinding;
+import io.nexstudios.menuservice.common.api.page.control.PageControlButton;
+import io.nexstudios.menuservice.common.api.page.control.PageControlStateStore;
+import io.nexstudios.menuservice.common.api.page.control.PageFilterControl;
+import io.nexstudios.menuservice.common.api.page.control.PageSortControl;
 import io.nexstudios.menuservice.common.api.render.RenderDiff;
 import io.nexstudios.menuservice.common.api.render.RenderPatch;
+import io.nexstudios.menuservice.common.api.render.RenderPlan;
 import io.nexstudios.menuservice.common.api.render.RenderReason;
 import io.nexstudios.menuservice.common.api.render.RenderResult;
 import org.bukkit.Bukkit;
+import org.bukkit.Material;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
 import java.time.Duration;
@@ -27,33 +38,20 @@ import java.util.Set;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import io.nexstudios.menuservice.common.api.item.MenuItem;
-import io.nexstudios.menuservice.common.api.page.control.PageControlBinding;
-import io.nexstudios.menuservice.common.api.page.control.PageControlButton;
-import io.nexstudios.menuservice.common.api.page.control.PageControlStateStore;
-import io.nexstudios.menuservice.common.api.page.control.PageFilterControl;
-import io.nexstudios.menuservice.common.api.page.control.PageSortControl;
+import io.nexstudios.menuservice.common.api.render.*;
 
-/**
- * Async render -> diff -> main-thread apply pipeline.
- *
- * Phase: base runtime (paging/deposits integrated later).
- */
 public final class AsyncMenuRenderEngine {
 
   private final Plugin plugin;
-  private final BukkitMenuItemAdapter itemAdapter;
 
   private final ExecutorService executor;
 
-  // Per-view coalescing: one render at a time, re-run once if requested while rendering.
   private final ConcurrentMap<BukkitMenuView, RenderGate> gates = new ConcurrentHashMap<>();
 
   private final Duration defaultInterval = Duration.ofSeconds(1);
 
-  public AsyncMenuRenderEngine(Plugin plugin, BukkitMenuItemAdapter itemAdapter) {
+  public AsyncMenuRenderEngine(Plugin plugin) {
     this.plugin = Objects.requireNonNull(plugin, "plugin must not be null");
-    this.itemAdapter = Objects.requireNonNull(itemAdapter, "itemAdapter must not be null");
 
     this.executor = Executors.newFixedThreadPool(
         Math.max(2, Runtime.getRuntime().availableProcessors() / 2),
@@ -67,10 +65,6 @@ public final class AsyncMenuRenderEngine {
 
   public Plugin plugin() {
     return plugin;
-  }
-
-  public BukkitMenuItemAdapter itemAdapter() {
-    return itemAdapter;
   }
 
   public void shutdown() {
@@ -111,6 +105,8 @@ public final class AsyncMenuRenderEngine {
     int size = view.inventory().getSize();
 
     RenderPopulateContext ctx = new RenderPopulateContext(view.key(), view.viewer(), size);
+
+    // Populator is allowed to enqueue planned items (suppliers).
     def.populator().populate(ctx);
 
     Optional<String> pageTarget = Optional.empty();
@@ -120,16 +116,11 @@ public final class AsyncMenuRenderEngine {
     }
 
     PagingBundle paging = renderPaging(view, pageTarget);
-
-    // NEW: render control buttons (optional)
     ButtonBundle buttons = renderControlButtons(view);
 
-    RenderResult base = ctx.toRenderResult();
-    RenderResult merged = merge(base, paging.result());
-    merged = merge(merged, buttons.result());
-
-    merged = injectDefaultPagingNavItemsIfEmpty(view, merged);
-    merged = applyEmptySlotFiller(def, size, merged);
+    RenderPlan base = ctx.toRenderPlan();
+    RenderPlan merged = merge(base, paging.plan());
+    merged = merge(merged, buttons.plan());
 
     Map<Integer, MenuSlot.MenuClickHandler> mergedHandlers = new HashMap<>(ctx.clickHandlers());
     mergedHandlers.putAll(paging.handlers());
@@ -138,72 +129,77 @@ public final class AsyncMenuRenderEngine {
     return new RenderBundle(merged, Map.copyOf(mergedHandlers));
   }
 
-  private void clearStickyForPagedArea(BukkitMenuView view, String areaId) {
-    Objects.requireNonNull(view, "view must not be null");
-    if (areaId == null || areaId.isBlank()) return;
+  private static RenderPlan merge(RenderPlan a, RenderPlan b) {
+    if (a == null || a.slotsToItems().isEmpty() && a.clearedSlots().isEmpty()) return b;
+    if (b == null || b.slotsToItems().isEmpty() && b.clearedSlots().isEmpty()) return a;
 
-    var pagedOpt = view.definition().pagedAreas();
-    if (pagedOpt.isEmpty()) return;
+    Map<Integer, MenuItemSupplier> items = new HashMap<>(a.slotsToItems());
+    items.putAll(b.slotsToItems());
 
-    for (var area : pagedOpt.get()) {
-      if (!area.id().equals(areaId)) continue;
-
-      int capacity = area.bounds().capacity();
-      var slots = PageSlotMapper.slotsFor(area.bounds(), capacity);
-      view.clearStickySlots(Set.copyOf(slots));
-      return;
-    }
-  }
-
-  private static RenderResult applyEmptySlotFiller(MenuDefinition def, int size, RenderResult input) {
-    Objects.requireNonNull(def, "def must not be null");
-    Objects.requireNonNull(input, "input must not be null");
-    if (size < 1) return input;
-
-    if (!def.decorationsEnabled()) {
-      return input;
-    }
-
-    MenuItem filler = def.emptySlotFiller().orElse(MenuDefaults.defaultEmptySlotFiller());
-
-    Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
-    Set<Integer> cleared = new HashSet<>(input.clearedSlots());
-
-    for (int slot = 0; slot < size; slot++) {
-      if (items.containsKey(slot)) continue;
-
-      // If the slot would end up empty (whether it was "cleared" or never set),
-      // we decorate/fill it.
-      items.put(slot, filler);
-      cleared.remove(slot);
-    }
-
-    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
-  }
-
-  private static RenderResult injectDefaultPagingNavItemsIfEmpty(BukkitMenuView view, RenderResult input) {
-    var pagedOpt = view.definition().pagedAreas();
-    if (pagedOpt.isEmpty()) return input;
-
-    Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
-    Set<Integer> cleared = new HashSet<>(input.clearedSlots());
-
-    for (var area : pagedOpt.get()) {
-      var nav = area.navigation();
-
-      nav.previousSlot().ifPresent(slot -> items.putIfAbsent(slot,
-          MenuItem.builder("minecraft:arrow").displayName("Previous").amount(1).build()
-      ));
-      nav.nextSlot().ifPresent(slot -> items.putIfAbsent(slot,
-          MenuItem.builder("minecraft:arrow").displayName("Next").amount(1).build()
-      ));
-      nav.refreshSlot().ifPresent(slot -> items.putIfAbsent(slot,
-          MenuItem.builder("minecraft:paper").displayName("Refresh").amount(1).build()
-      ));
-    }
+    Set<Integer> cleared = new HashSet<>(a.clearedSlots());
+    cleared.addAll(b.clearedSlots());
 
     cleared.removeAll(items.keySet());
-    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
+
+    return new RenderPlan(Map.copyOf(items), Set.copyOf(cleared));
+  }
+
+  private void apply(BukkitMenuView view, RenderBundle bundle) {
+    if (!Bukkit.isPrimaryThread()) {
+      Bukkit.getScheduler().runTask(plugin, () -> apply(view, bundle));
+      return;
+    }
+    if (view.isClosed()) return;
+
+    Inventory inv = view.inventory();
+
+    // Materialize planned items on the main thread
+    RenderResult result = materialize(bundle.plan());
+
+    // Main-thread only: inject defaults + apply decorations (touch Bukkit internals)
+    result = injectDefaultPagingNavItemsIfEmpty(view, result);
+    result = applyEmptySlotFiller(view.definition(), inv.getSize(), result);
+
+    RenderResult filtered = filterOutActiveDepositSlots(view, result);
+    filtered = filterOutStickyOverrides(view, filtered);
+
+    RenderPatch patch;
+    synchronized (view.renderStateLock()) {
+      patch = RenderDiff.diff(view.renderState(), filtered);
+    }
+
+    if (!patch.isEmpty()) {
+      for (int slot : patch.clearedSlots()) {
+        if (slot >= 0 && slot < inv.getSize()) inv.clear(slot);
+      }
+      for (var e : patch.changedSlots().entrySet()) {
+        int slot = e.getKey();
+        if (slot < 0 || slot >= inv.getSize()) continue;
+        inv.setItem(slot, e.getValue().stack());
+      }
+    }
+
+    Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>(bundle.handlers());
+    injectPagingNavigationHandlers(view, handlers);
+    ClickHandlerStore.attach(inv, handlers);
+  }
+
+  private static RenderResult materialize(RenderPlan plan) {
+    if (plan == null) return RenderResult.empty();
+
+    Map<Integer, MenuItem> items = new HashMap<>();
+    for (var e : plan.slotsToItems().entrySet()) {
+      int slot = e.getKey();
+      MenuItemSupplier supplier = e.getValue();
+      if (supplier == null) continue;
+
+      MenuItem item = supplier.get();
+      if (item == null) continue;
+
+      items.put(slot, item);
+    }
+
+    return new RenderResult(Map.copyOf(items), Set.copyOf(plan.clearedSlots()));
   }
 
   private PagingBundle renderPaging(BukkitMenuView view, Optional<String> targetAreaId) {
@@ -213,11 +209,10 @@ public final class AsyncMenuRenderEngine {
 
     PageState state = pageStateOpt.get();
 
-    Map<Integer, io.nexstudios.menuservice.common.api.item.MenuItem> items = new HashMap<>();
+    Map<Integer, MenuItemSupplier> items = new HashMap<>();
     Set<Integer> cleared = new HashSet<>();
     Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>();
 
-    // NEW: controls snapshot per definition
     List<PageControlBinding> controls = view.definition().pageControls().orElse(List.of());
     PageControlStateStore stateStore = view.pageControlStateStore();
 
@@ -230,11 +225,9 @@ public final class AsyncMenuRenderEngine {
       PagedAreaDefinition<Object> area = (PagedAreaDefinition<Object>) raw;
 
       List<Object> elements = new ArrayList<>(area.load(view.key(), view.viewer()));
-
-      // NEW: apply filters then sorts for this area
       elements = applyControlsForArea(controls, stateStore, view, area.id(), elements);
 
-      PageModel model = area.model();
+      var model = area.model();
       int pageCount = model.pageCountFor(elements.size());
       view.updatePageCount(area.id(), pageCount);
 
@@ -244,11 +237,10 @@ public final class AsyncMenuRenderEngine {
         state.setIndex(area.id(), clampedIndex);
       }
 
-      RenderResult page = PageRenderer.renderPage(area, clampedIndex, elements);
+      RenderPlan page = PageRenderer.renderPage(area, clampedIndex, elements);
       items.putAll(page.slotsToItems());
       cleared.addAll(page.clearedSlots());
 
-      // Build click handlers for the currently rendered slice (if configured)
       final List<Object> finalElements = elements;
 
       area.clickHandler().ifPresent(ch -> {
@@ -268,9 +260,122 @@ public final class AsyncMenuRenderEngine {
     }
 
     return new PagingBundle(
-        new RenderResult(Map.copyOf(items), Set.copyOf(cleared)),
+        new RenderPlan(Map.copyOf(items), Set.copyOf(cleared)),
         Map.copyOf(handlers)
     );
+  }
+
+  private ButtonBundle renderControlButtons(BukkitMenuView view) {
+    var buttonsOpt = view.definition().pageControlButtons();
+    if (buttonsOpt.isEmpty()) return ButtonBundle.empty();
+
+    List<PageControlBinding> controls = view.definition().pageControls().orElse(List.of());
+    PageControlStateStore stateStore = view.pageControlStateStore();
+
+    Map<Integer, MenuItemSupplier> items = new HashMap<>();
+    Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>();
+
+    for (PageControlButton btn : buttonsOpt.get()) {
+      PageControlBinding binding = null;
+      for (PageControlBinding b : controls) {
+        if (!b.areaId().equals(btn.areaId())) continue;
+        if (!b.controlId().equals(btn.controlId())) continue;
+        binding = b;
+        break;
+      }
+      if (binding == null) continue;
+
+      var control = binding.control();
+      var activeModeId = stateStore.getActiveModeId(view.viewer(), view.key(), btn.areaId(), control.controlId());
+
+      items.put(btn.slot(), () -> btn.render(new PageControlButton.RenderContext(
+          view.key(),
+          view.viewer(),
+          btn.areaId(),
+          control,
+          activeModeId
+      )));
+
+      handlers.put(btn.slot(), ctx -> btn.onClick(new PageControlButton.ClickContext(
+          ctx.view(),
+          view.key(),
+          view.viewer(),
+          btn.areaId(),
+          control,
+          stateStore
+      )));
+    }
+
+    return new ButtonBundle(
+        new RenderPlan(Map.copyOf(items), Set.of()),
+        Map.copyOf(handlers)
+    );
+  }
+
+  // Default nav injection stays RenderResult-based and runs in apply(...) on main thread
+  private static RenderResult injectDefaultPagingNavItemsIfEmpty(BukkitMenuView view, RenderResult input) {
+    var pagedOpt = view.definition().pagedAreas();
+    if (pagedOpt.isEmpty()) return input;
+
+    Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
+    Set<Integer> cleared = new HashSet<>(input.clearedSlots());
+
+    for (var area : pagedOpt.get()) {
+      var nav = area.navigation();
+
+      nav.previousSlot().ifPresent(slot -> items.putIfAbsent(slot,
+          MenuItem.of(new ItemStack(Material.ARROW, 1))
+      ));
+      nav.nextSlot().ifPresent(slot -> items.putIfAbsent(slot,
+          MenuItem.of(new ItemStack(Material.ARROW, 1))
+      ));
+      nav.refreshSlot().ifPresent(slot -> items.putIfAbsent(slot,
+          MenuItem.of(new ItemStack(Material.PAPER, 1))
+      ));
+    }
+
+    cleared.removeAll(items.keySet());
+    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
+  }
+
+  private static RenderResult applyEmptySlotFiller(MenuDefinition def, int size, RenderResult input) {
+    Objects.requireNonNull(def, "def must not be null");
+    Objects.requireNonNull(input, "input must not be null");
+    if (size < 1) return input;
+
+    if (!def.decorationsEnabled()) {
+      return input;
+    }
+
+    MenuItem filler = def.emptySlotFiller().orElse(MenuDefaults.defaultEmptySlotFiller());
+
+    Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
+    Set<Integer> cleared = new HashSet<>(input.clearedSlots());
+
+    for (int slot = 0; slot < size; slot++) {
+      if (items.containsKey(slot)) continue;
+      items.put(slot, filler);
+      cleared.remove(slot);
+    }
+
+    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
+  }
+
+  private void clearStickyForPagedArea(BukkitMenuView view, String areaId) {
+    Objects.requireNonNull(view, "view must not be null");
+    if (areaId == null || areaId.isBlank()) return;
+
+    var pagedOpt = view.definition().pagedAreas();
+    if (pagedOpt.isEmpty()) return;
+
+    for (var area : pagedOpt.get()) {
+      if (!area.id().equals(areaId)) continue;
+
+      int capacity = area.bounds().capacity();
+      var slots = PageSlotMapper.slotsFor(area.bounds(), capacity);
+      view.clearStickySlots(Set.copyOf(slots));
+      return;
+    }
   }
 
   private static List<Object> applyControlsForArea(
@@ -321,128 +426,6 @@ public final class AsyncMenuRenderEngine {
     }
 
     return elements;
-  }
-
-  private ButtonBundle renderControlButtons(BukkitMenuView view) {
-    var buttonsOpt = view.definition().pageControlButtons();
-    if (buttonsOpt.isEmpty()) return ButtonBundle.empty();
-
-    List<PageControlBinding> controls = view.definition().pageControls().orElse(List.of());
-    PageControlStateStore stateStore = view.pageControlStateStore();
-
-    Map<Integer, MenuItem> items = new HashMap<>();
-    Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>();
-
-    for (PageControlButton btn : buttonsOpt.get()) {
-      // find control
-      PageControlBinding binding = null;
-      for (PageControlBinding b : controls) {
-        if (!b.areaId().equals(btn.areaId())) continue;
-        if (!b.controlId().equals(btn.controlId())) continue;
-        binding = b;
-        break;
-      }
-      if (binding == null) continue;
-
-      var control = binding.control();
-      var activeModeId = stateStore.getActiveModeId(view.viewer(), view.key(), btn.areaId(), control.controlId());
-
-      // render item
-      var item = btn.render(new PageControlButton.RenderContext(
-          view.key(),
-          view.viewer(),
-          btn.areaId(),
-          control,
-          activeModeId
-      ));
-      items.put(btn.slot(), item);
-
-      // click handler
-      handlers.put(btn.slot(), ctx -> btn.onClick(new PageControlButton.ClickContext(
-          ctx.view(),
-          view.key(),
-          view.viewer(),
-          btn.areaId(),
-          control,
-          stateStore
-      )));
-    }
-
-    return new ButtonBundle(
-        new RenderResult(Map.copyOf(items), Set.of()),
-        Map.copyOf(handlers)
-    );
-  }
-
-  private static RenderResult merge(RenderResult a, RenderResult b) {
-    if (a == null || a.slotsToItems().isEmpty() && a.clearedSlots().isEmpty()) return b;
-    if (b == null || b.slotsToItems().isEmpty() && b.clearedSlots().isEmpty()) return a;
-
-    Map<Integer, io.nexstudios.menuservice.common.api.item.MenuItem> items = new HashMap<>(a.slotsToItems());
-    items.putAll(b.slotsToItems());
-
-    Set<Integer> cleared = new HashSet<>(a.clearedSlots());
-    cleared.addAll(b.clearedSlots());
-
-    // If a slot is set, it shouldn't be cleared.
-    cleared.removeAll(items.keySet());
-
-    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
-  }
-
-  private void apply(BukkitMenuView view, RenderBundle bundle) {
-    if (!Bukkit.isPrimaryThread()) {
-      Bukkit.getScheduler().runTask(plugin, () -> apply(view, bundle));
-      return;
-    }
-    if (view.isClosed()) return;
-
-    Inventory inv = view.inventory();
-    RenderResult result = bundle.result();
-
-    RenderResult filtered = filterOutActiveDepositSlots(view, result);
-    filtered = filterOutStickyOverrides(view, filtered);
-
-    RenderPatch patch;
-    synchronized (view.renderStateLock()) {
-      patch = RenderDiff.diff(view.renderState(), filtered);
-    }
-
-    if (!patch.isEmpty()) {
-      for (int slot : patch.clearedSlots()) {
-        if (slot >= 0 && slot < inv.getSize()) inv.clear(slot);
-      }
-      for (var e : patch.changedSlots().entrySet()) {
-        int slot = e.getKey();
-        if (slot < 0 || slot >= inv.getSize()) continue;
-        inv.setItem(slot, itemAdapter.toItemStack(e.getValue()));
-      }
-    }
-
-    Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>(bundle.handlers());
-    injectPagingNavigationHandlers(view, handlers);
-    ClickHandlerStore.attach(inv, handlers);
-  }
-
-  private static RenderResult filterOutStickyOverrides(BukkitMenuView view, RenderResult input) {
-    Objects.requireNonNull(view, "view must not be null");
-    Objects.requireNonNull(input, "input must not be null");
-
-    Map<Integer, MenuItem> sticky = view.stickyOverridesSnapshot();
-    if (sticky.isEmpty()) return input;
-
-    Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
-    Set<Integer> cleared = new HashSet<>(input.clearedSlots());
-
-    // If a slot is sticky, never touch it during refresh renders:
-    // - don't override it with rendered items
-    // - don't clear it
-    for (int slot : sticky.keySet()) {
-      items.remove(slot);
-      cleared.remove(slot);
-    }
-
-    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
   }
 
   private void injectPagingNavigationHandlers(BukkitMenuView view, Map<Integer, MenuSlot.MenuClickHandler> handlers) {
@@ -511,6 +494,27 @@ public final class AsyncMenuRenderEngine {
     return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
   }
 
+  private static RenderResult filterOutStickyOverrides(BukkitMenuView view, RenderResult input) {
+    Objects.requireNonNull(view, "view must not be null");
+    Objects.requireNonNull(input, "input must not be null");
+
+    Map<Integer, MenuItem> sticky = view.stickyOverridesSnapshot();
+    if (sticky.isEmpty()) return input;
+
+    Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
+    Set<Integer> cleared = new HashSet<>(input.clearedSlots());
+
+    // If a slot is sticky, never touch it during refresh renders:
+    // - don't override it with rendered items
+    // - don't clear it
+    for (int slot : sticky.keySet()) {
+      items.remove(slot);
+      cleared.remove(slot);
+    }
+
+    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
+  }
+
   public Duration resolveInterval(MenuDefinition def) {
     return def.refreshInterval().orElse(defaultInterval);
   }
@@ -520,32 +524,32 @@ public final class AsyncMenuRenderEngine {
     final AtomicBoolean pending = new AtomicBoolean(false);
   }
 
-  private record RenderBundle(RenderResult result, Map<Integer, MenuSlot.MenuClickHandler> handlers) {
+  private record RenderBundle(RenderPlan plan, Map<Integer, MenuSlot.MenuClickHandler> handlers) {
     private RenderBundle {
-      Objects.requireNonNull(result, "result must not be null");
+      Objects.requireNonNull(plan, "plan must not be null");
       Objects.requireNonNull(handlers, "handlers must not be null");
     }
   }
 
-  private record PagingBundle(RenderResult result, Map<Integer, MenuSlot.MenuClickHandler> handlers) {
+  private record PagingBundle(RenderPlan plan, Map<Integer, MenuSlot.MenuClickHandler> handlers) {
     private PagingBundle {
-      Objects.requireNonNull(result, "result must not be null");
+      Objects.requireNonNull(plan, "plan must not be null");
       Objects.requireNonNull(handlers, "handlers must not be null");
     }
 
     static PagingBundle empty() {
-      return new PagingBundle(RenderResult.empty(), Map.of());
+      return new PagingBundle(RenderPlan.empty(), Map.of());
     }
   }
 
-  private record ButtonBundle(RenderResult result, Map<Integer, MenuSlot.MenuClickHandler> handlers) {
+  private record ButtonBundle(RenderPlan plan, Map<Integer, MenuSlot.MenuClickHandler> handlers) {
     private ButtonBundle {
-      Objects.requireNonNull(result, "result must not be null");
+      Objects.requireNonNull(plan, "plan must not be null");
       Objects.requireNonNull(handlers, "handlers must not be null");
     }
 
     static ButtonBundle empty() {
-      return new ButtonBundle(RenderResult.empty(), Map.of());
+      return new ButtonBundle(RenderPlan.empty(), Map.of());
     }
   }
 }

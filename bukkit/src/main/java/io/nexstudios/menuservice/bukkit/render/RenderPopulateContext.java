@@ -5,7 +5,9 @@ import io.nexstudios.menuservice.common.api.MenuPopulateContext;
 import io.nexstudios.menuservice.common.api.MenuSlot;
 import io.nexstudios.menuservice.common.api.ViewerRef;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
-import io.nexstudios.menuservice.common.api.render.RenderResult;
+import io.nexstudios.menuservice.common.api.item.MenuItemSupplier;
+import io.nexstudios.menuservice.common.api.render.RenderPlan;
+import org.bukkit.Bukkit;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -13,16 +15,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * Async-safe populate context that records desired output (items, clears, handlers).
- */
+// ... existing code ...
+
 public final class RenderPopulateContext implements MenuPopulateContext {
 
   private final MenuKey key;
   private final ViewerRef viewer;
   private final int size;
 
-  private final Map<Integer, MenuItem> items = new HashMap<>();
+  private final Map<Integer, MenuItemSupplier> items = new HashMap<>();
   private final Set<Integer> cleared = new HashSet<>();
   private final Map<Integer, MenuSlot.MenuClickHandler> clickHandlers = new HashMap<>();
 
@@ -54,8 +55,21 @@ public final class RenderPopulateContext implements MenuPopulateContext {
 
       @Override
       public void setItem(MenuItem item) {
+        if (!Bukkit.isPrimaryThread()) {
+          throw new IllegalStateException(
+              "MenuSlot.setItem(...) is not allowed during async populate. " +
+                  "Use slot.setPlannedItem(() -> MenuItem.of(new ItemStack(...))) instead."
+          );
+        }
         MenuSlot.requireNonNullItem(item);
-        items.put(slot, item);
+        items.put(slot, () -> item);
+        cleared.remove(slot);
+      }
+
+      @Override
+      public void setPlannedItem(MenuItemSupplier supplier) {
+        MenuSlot.requireNonNullPlannedItem(supplier);
+        items.put(slot, supplier);
         cleared.remove(slot);
       }
 
@@ -77,8 +91,8 @@ public final class RenderPopulateContext implements MenuPopulateContext {
     return size;
   }
 
-  public RenderResult toRenderResult() {
-    return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
+  public RenderPlan toRenderPlan() {
+    return new RenderPlan(Map.copyOf(items), Set.copyOf(cleared));
   }
 
   public Map<Integer, MenuSlot.MenuClickHandler> clickHandlers() {
