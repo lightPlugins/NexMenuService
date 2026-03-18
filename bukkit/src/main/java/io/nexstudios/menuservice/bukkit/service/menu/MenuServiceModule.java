@@ -12,11 +12,11 @@ import java.util.Objects;
  *
  * This module must be installed by a host plugin.
  */
-public final class BukkitMenuServiceModule implements ServiceModule {
+public final class MenuServiceModule implements ServiceModule {
 
   private final Plugin plugin;
 
-  public BukkitMenuServiceModule(Plugin plugin) {
+  public MenuServiceModule(Plugin plugin) {
     this.plugin = Objects.requireNonNull(plugin, "plugin must not be null");
   }
 
