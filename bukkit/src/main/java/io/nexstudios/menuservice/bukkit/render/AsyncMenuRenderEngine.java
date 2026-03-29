@@ -80,6 +80,12 @@ public final class AsyncMenuRenderEngine {
     tryStart(view, gate, reason);
   }
 
+  public void clearGate(BukkitMenuView view) {
+    if (view != null) {
+      gates.remove(view);
+    }
+  }
+
   private void tryStart(BukkitMenuView view, RenderGate gate, RenderReason reason) {
     if (!gate.rendering.compareAndSet(false, true)) return;
 
@@ -169,19 +175,34 @@ public final class AsyncMenuRenderEngine {
     }
 
     if (!patch.isEmpty()) {
-      for (int slot : patch.clearedSlots()) {
-        if (slot >= 0 && slot < inv.getSize()) inv.clear(slot);
-      }
-      for (var e : patch.changedSlots().entrySet()) {
-        int slot = e.getKey();
-        if (slot < 0 || slot >= inv.getSize()) continue;
-        inv.setItem(slot, e.getValue().stack());
-      }
+      applyPatchToInventoryFast(inv, patch);
     }
 
     Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>(bundle.handlers());
     injectPagingNavigationHandlers(view, handlers);
     ClickHandlerStore.attach(inv, handlers);
+  }
+
+  private void applyPatchToInventoryFast(Inventory inv, RenderPatch patch) {
+    int size = inv.getSize();
+    ItemStack[] contents = inv.getContents();
+
+    // Apply clears
+    for (int slot : patch.clearedSlots()) {
+      if (slot >= 0 && slot < size) {
+        contents[slot] = null;
+      }
+    }
+
+    // Apply changes
+    for (var e : patch.changedSlots().entrySet()) {
+      int slot = e.getKey();
+      if (slot < 0 || slot >= size) continue;
+      contents[slot] = e.getValue().stack();
+    }
+
+    // Bulk-apply to inventory (much faster than individual setItem calls)
+    inv.setContents(contents);
   }
 
   private static RenderResult materialize(RenderPlan plan) {

@@ -7,6 +7,7 @@ import io.nexstudios.menuservice.common.api.item.MenuItem;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -18,7 +19,7 @@ public final class BukkitDepositLedger implements DepositLedger {
   @Override
   public void recordDeposit(int slot, MenuItem item) {
     if (slot < 0) throw new IllegalArgumentException("slot must be >= 0");
-    if (item == null) throw new IllegalArgumentException("item must not be null");
+    Objects.requireNonNull(item, "item must not be null");
     bySlot.put(slot, new DepositEntry(slot, item, Instant.now()));
   }
 
@@ -44,3 +45,4 @@ public final class BukkitDepositLedger implements DepositLedger {
     bySlot.clear();
   }
 }
+

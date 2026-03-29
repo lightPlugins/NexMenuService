@@ -34,31 +34,33 @@ public final class ClickThrottler {
 
     State s = states.computeIfAbsent(viewerId, id -> new State(nowMillis));
 
-    // Active cooldown?
-    if (nowMillis < s.blockedUntilMillis) {
-      return false;
+    synchronized (s) {
+      // Active cooldown?
+      if (nowMillis < s.blockedUntilMillis) {
+        return false;
+      }
+
+      // Window expired -> reset
+      if (nowMillis - s.windowStartMillis >= windowMillis) {
+        s.windowStartMillis = nowMillis;
+        s.actionsInWindow = 0;
+      }
+
+      s.actionsInWindow++;
+
+      // Exceeded -> start cooldown
+      if (s.actionsInWindow > maxActionsPerWindow) {
+        s.blockedUntilMillis = nowMillis + cooldownMillis;
+
+        // Reset counter to avoid immediate re-trigger loops after cooldown ends
+        s.windowStartMillis = nowMillis;
+        s.actionsInWindow = 0;
+
+        return false;
+      }
+
+      return true;
     }
-
-    // Window expired -> reset
-    if (nowMillis - s.windowStartMillis >= windowMillis) {
-      s.windowStartMillis = nowMillis;
-      s.actionsInWindow = 0;
-    }
-
-    s.actionsInWindow++;
-
-    // Exceeded -> start cooldown
-    if (s.actionsInWindow > maxActionsPerWindow) {
-      s.blockedUntilMillis = nowMillis + cooldownMillis;
-
-      // Reset counter to avoid immediate re-trigger loops after cooldown ends
-      s.windowStartMillis = nowMillis;
-      s.actionsInWindow = 0;
-
-      return false;
-    }
-
-    return true;
   }
 
   public void clear(UUID viewerId) {
@@ -66,10 +68,19 @@ public final class ClickThrottler {
     states.remove(viewerId);
   }
 
+  public void cleanupStaleEntries(long nowMillis, long staleThresholdMillis) {
+    states.entrySet().removeIf(e -> {
+      State s = e.getValue();
+      synchronized (s) {
+        return (nowMillis - s.windowStartMillis) > staleThresholdMillis && s.blockedUntilMillis < nowMillis;
+      }
+    });
+  }
+
   private static final class State {
-    volatile long windowStartMillis;
-    volatile int actionsInWindow;
-    volatile long blockedUntilMillis;
+    private long windowStartMillis;
+    private int actionsInWindow;
+    private long blockedUntilMillis;
 
     private State(long nowMillis) {
       this.windowStartMillis = nowMillis;
