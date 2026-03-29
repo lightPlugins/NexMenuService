@@ -274,6 +274,8 @@ public final class BukkitMenuView implements MenuView {
   public void close(CloseReason reason) {
     if (!closed.compareAndSet(false, true)) return;
 
+    renderEngine.clearGate(this);
+
     // detach from service first to avoid races with InventoryCloseEvent
     service.clearViewIfSame(viewer.uniqueId(), this);
 

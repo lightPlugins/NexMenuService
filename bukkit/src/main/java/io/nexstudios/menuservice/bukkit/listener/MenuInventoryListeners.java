@@ -488,12 +488,12 @@ public final class MenuInventoryListeners implements Listener {
     if (!(top.getHolder() instanceof PaperMenuHolder holder)) return;
 
     BukkitMenuView view = service.findOpenView(holder.viewerId());
-    if (view != null) {
-      view.close(CloseReason.PLAYER_CLOSED);
+    if (view == null) {
+      service.clearView(holder.viewerId());
       return;
     }
 
-    service.clearView(holder.viewerId());
+    view.close(CloseReason.PLAYER_CLOSED);
   }
 
   private int tryDepositIntoSlot(

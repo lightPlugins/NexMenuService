@@ -35,7 +35,7 @@ public final class InMemoryPageControlStateStore implements PageControlStateStor
 
   public void clearForViewer(UUID viewerId) {
     if (viewerId == null) return;
-    activeModeByKey.keySet().removeIf(k -> k.viewerId.equals(viewerId));
+    activeModeByKey.entrySet().removeIf(e -> e.getKey().viewerId.equals(viewerId));
   }
 
   private record Key(UUID viewerId, String menuKey, String areaId, String controlId) {}

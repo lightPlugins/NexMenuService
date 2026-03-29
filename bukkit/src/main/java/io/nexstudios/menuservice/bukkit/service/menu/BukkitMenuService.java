@@ -17,6 +17,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -80,7 +81,12 @@ public final class BukkitMenuService implements MenuService {
   private void tickRefresh() {
     long nowMillis = System.currentTimeMillis();
 
-    for (BukkitMenuView view : openViews.values()) {
+    // Periodically clean up stale throttler entries (every ~5 seconds)
+    if (nowMillis % 5000 < 10) {
+      clickThrottler.cleanupStaleEntries(nowMillis, 30000L);
+    }
+
+    for (BukkitMenuView view : List.copyOf(openViews.values())) {
       if (view == null || view.isClosed()) continue;
 
       long nextAt = view.nextAutoRefreshAtMillis();
