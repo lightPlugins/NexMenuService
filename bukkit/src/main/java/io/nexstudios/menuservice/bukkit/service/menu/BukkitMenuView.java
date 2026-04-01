@@ -302,7 +302,10 @@ public final class BukkitMenuView implements MenuView {
         });
       });
 
-      if (player.isOnline()) {
+      // Keep the client cursor stable when we are only transitioning into another menu.
+      // The subsequent openInventory() call will replace the old view without a visible
+      // close/open flicker.
+      if (player.isOnline() && reason != CloseReason.OPENED_OTHER_MENU) {
         player.closeInventory();
       }
     }
