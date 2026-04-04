@@ -9,6 +9,7 @@ import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.item.MenuItemSupplier;
 import org.bukkit.Material;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.HashMap;
@@ -83,7 +84,7 @@ final class SimplePopulateContext implements MenuPopulateContext {
 
         ItemStack resolved = headFuture.getNow(null);
         if (resolved != null) {
-          items.put(slot, MenuItem.of(resolved));
+          items.put(slot, mergePlaceholderMeta(placeholder, resolved));
           return;
         }
 
@@ -112,5 +113,20 @@ final class SimplePopulateContext implements MenuPopulateContext {
       inventory.setItem(e.getKey(), e.getValue().stack());
     }
     ClickHandlerStore.attach(inventory, clickHandlers);
+  }
+
+  private static MenuItem mergePlaceholderMeta(MenuItem placeholder, ItemStack resolvedStack) {
+    ItemStack merged = resolvedStack.clone();
+    ItemMeta placeholderMeta = placeholder.stack().getItemMeta();
+    ItemMeta mergedMeta = merged.getItemMeta();
+
+    if (placeholderMeta != null && mergedMeta != null) {
+      if (placeholderMeta.hasItemName()) mergedMeta.itemName(placeholderMeta.itemName());
+      if (placeholderMeta.hasDisplayName()) mergedMeta.displayName(placeholderMeta.displayName());
+      if (placeholderMeta.hasLore()) mergedMeta.lore(placeholderMeta.lore());
+      merged.setItemMeta(mergedMeta);
+    }
+
+    return MenuItem.of(merged);
   }
 }

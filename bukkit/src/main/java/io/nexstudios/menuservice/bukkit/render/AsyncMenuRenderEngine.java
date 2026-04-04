@@ -9,6 +9,7 @@ import io.nexstudios.menuservice.common.api.deposit.DepositLedger;
 import io.nexstudios.menuservice.common.api.deposit.DepositPolicy;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.item.MenuItemSupplier;
+import io.nexstudios.menuservice.common.api.item.PlannedMenuItemSupplier;
 import io.nexstudios.menuservice.common.api.page.PageRenderer;
 import io.nexstudios.menuservice.common.api.page.PageSlotMapper;
 import io.nexstudios.menuservice.common.api.page.PagedAreaDefinition;
@@ -24,6 +25,7 @@ import io.nexstudios.menuservice.common.api.render.RenderPlan;
 import io.nexstudios.menuservice.common.api.render.RenderReason;
 import io.nexstudios.menuservice.common.api.render.RenderResult;
 import org.bukkit.Bukkit;
+import org.bukkit.inventory.ItemFlag;
 import org.bukkit.Material;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.Inventory;
@@ -134,7 +136,7 @@ public final class AsyncMenuRenderEngine {
     mergedHandlers.putAll(paging.handlers());
     mergedHandlers.putAll(buttons.handlers());
 
-    return new RenderBundle(merged, Map.copyOf(mergedHandlers), ctx.plannedHeads(), renderToken);
+    return new RenderBundle(merged, Map.copyOf(mergedHandlers), toPlannedHeadUpdates(ctx.plannedHeads()), renderToken);
   }
 
   private static RenderPlan merge(RenderPlan a, RenderPlan b) {
@@ -162,7 +164,8 @@ public final class AsyncMenuRenderEngine {
     Inventory inv = view.inventory();
 
     // Materialize planned items on the main thread
-    RenderResult result = materialize(bundle.plan());
+    MaterializedRender materialized = materialize(bundle.plan());
+    RenderResult result = materialized.result();
 
     // Main-thread only: inject defaults + apply decorations (touch Bukkit internals)
     result = injectDefaultPagingNavItemsIfEmpty(view, result);
@@ -184,13 +187,15 @@ public final class AsyncMenuRenderEngine {
     injectPagingNavigationHandlers(view, handlers);
     ClickHandlerStore.attach(inv, handlers);
 
-    registerPlannedHeads(view, bundle.plannedHeads(), bundle.renderToken());
+    List<PlannedHeadUpdate> plannedHeads = new ArrayList<>(bundle.plannedHeads());
+    plannedHeads.addAll(materialized.plannedHeads());
+    registerPlannedHeads(view, plannedHeads, bundle.renderToken());
   }
 
-  private void registerPlannedHeads(BukkitMenuView view, List<RenderPopulateContext.PlannedHeadUpdate> plannedHeads, long renderToken) {
+  private void registerPlannedHeads(BukkitMenuView view, List<PlannedHeadUpdate> plannedHeads, long renderToken) {
     if (plannedHeads == null || plannedHeads.isEmpty()) return;
 
-    for (RenderPopulateContext.PlannedHeadUpdate plannedHead : plannedHeads) {
+    for (PlannedHeadUpdate plannedHead : plannedHeads) {
       plannedHead.future().whenComplete((stack, err) -> {
         if (err != null || stack == null || view.isClosed()) return;
 
@@ -211,8 +216,17 @@ public final class AsyncMenuRenderEngine {
     ItemMeta mergedMeta = merged.getItemMeta();
 
     if (placeholderMeta != null && mergedMeta != null) {
+      if (placeholderMeta.hasItemName()) {
+        mergedMeta.itemName(placeholderMeta.itemName());
+      }
+      if (placeholderMeta.hasDisplayName()) {
+        mergedMeta.displayName(placeholderMeta.displayName());
+      }
       if (placeholderMeta.hasLore()) {
         mergedMeta.lore(placeholderMeta.lore());
+      }
+      if (!placeholderMeta.getItemFlags().isEmpty()) {
+        mergedMeta.addItemFlags(placeholderMeta.getItemFlags().toArray(new ItemFlag[0]));
       }
       merged.setItemMeta(mergedMeta);
     }
@@ -242,22 +256,53 @@ public final class AsyncMenuRenderEngine {
     inv.setContents(contents);
   }
 
-  private static RenderResult materialize(RenderPlan plan) {
-    if (plan == null) return RenderResult.empty();
+  private MaterializedRender materialize(RenderPlan plan) {
+    if (plan == null) return new MaterializedRender(RenderResult.empty(), List.of());
 
     Map<Integer, MenuItem> items = new HashMap<>();
+    List<PlannedHeadUpdate> plannedHeads = new ArrayList<>();
     for (var e : plan.slotsToItems().entrySet()) {
       int slot = e.getKey();
       MenuItemSupplier supplier = e.getValue();
       if (supplier == null) continue;
 
-      MenuItem item = supplier.get();
-      if (item == null) continue;
+      if (supplier instanceof PlannedMenuItemSupplier plannedSupplier) {
+        MenuItem placeholder = plannedSupplier.placeholder();
+        items.put(slot, placeholder);
 
-      items.put(slot, item);
+        ItemStack resolved = null;
+        try {
+          resolved = plannedSupplier.headFuture().getNow(null);
+        } catch (CompletionException ignored) {
+          // Keep the placeholder; the future will be handled asynchronously if it resolves later.
+        }
+
+        if (resolved != null) {
+          items.put(slot, mergePlaceholderMeta(placeholder, resolved));
+        } else {
+          plannedHeads.add(new PlannedHeadUpdate(slot, placeholder, plannedSupplier.headFuture()));
+        }
+        continue;
+      }
+
+      MenuItem item = supplier.get();
+      if (item != null) items.put(slot, item);
     }
 
-    return new RenderResult(Map.copyOf(items), Set.copyOf(plan.clearedSlots()));
+    return new MaterializedRender(
+        new RenderResult(Map.copyOf(items), Set.copyOf(plan.clearedSlots())),
+        List.copyOf(plannedHeads)
+    );
+  }
+
+  private static List<PlannedHeadUpdate> toPlannedHeadUpdates(List<RenderPopulateContext.PlannedHeadUpdate> plannedHeads) {
+    if (plannedHeads == null || plannedHeads.isEmpty()) return List.of();
+
+    List<PlannedHeadUpdate> updates = new ArrayList<>(plannedHeads.size());
+    for (RenderPopulateContext.PlannedHeadUpdate plannedHead : plannedHeads) {
+      updates.add(new PlannedHeadUpdate(plannedHead.slot(), plannedHead.placeholder(), plannedHead.future()));
+    }
+    return List.copyOf(updates);
   }
 
   private PagingBundle renderPaging(BukkitMenuView view, Optional<String> targetAreaId) {
@@ -373,22 +418,33 @@ public final class AsyncMenuRenderEngine {
   // Default nav injection stays RenderResult-based and runs in apply(...) on main thread
   private static RenderResult injectDefaultPagingNavItemsIfEmpty(BukkitMenuView view, RenderResult input) {
     var pagedOpt = view.definition().pagedAreas();
-    if (pagedOpt.isEmpty()) return input;
+    var stateOpt = view.pageState();
+    if (pagedOpt.isEmpty() || stateOpt.isEmpty()) return input;
 
+    PageState state = stateOpt.get();
     Map<Integer, MenuItem> items = new HashMap<>(input.slotsToItems());
     Set<Integer> cleared = new HashSet<>(input.clearedSlots());
 
     for (var area : pagedOpt.get()) {
       var nav = area.navigation();
+      int pageCount = Math.max(1, view.cachedPageCount(area.id()));
+      int currentIndex = Math.min(Math.max(0, state.getIndex(area.id())), pageCount - 1);
+      int currentPageNumber = currentIndex + 1;
 
-      nav.previousSlot().ifPresent(slot -> items.putIfAbsent(slot,
-          MenuItem.of(new ItemStack(Material.ARROW, 1))
-      ));
-      nav.nextSlot().ifPresent(slot -> items.putIfAbsent(slot,
-          MenuItem.of(new ItemStack(Material.ARROW, 1))
-      ));
+      if (!(nav.hidePreviousOnFirstPage() && currentIndex <= 0)) {
+        nav.previousSlot().ifPresent(slot -> items.putIfAbsent(slot,
+            buildNavigationItem(nav.previousItem(), new ItemStack(Material.ARROW, 1), nav.showCurrentPageAmount(), currentPageNumber)
+        ));
+      }
+
+      if (!(nav.hideNextOnLastPage() && currentIndex >= pageCount - 1)) {
+        nav.nextSlot().ifPresent(slot -> items.putIfAbsent(slot,
+            buildNavigationItem(nav.nextItem(), new ItemStack(Material.ARROW, 1), nav.showCurrentPageAmount(), currentPageNumber)
+        ));
+      }
+
       nav.refreshSlot().ifPresent(slot -> items.putIfAbsent(slot,
-          MenuItem.of(new ItemStack(Material.PAPER, 1))
+          buildNavigationItem(nav.refreshItem(), new ItemStack(Material.PAPER, 1), false, currentPageNumber)
       ));
     }
 
@@ -417,6 +473,21 @@ public final class AsyncMenuRenderEngine {
     }
 
     return new RenderResult(Map.copyOf(items), Set.copyOf(cleared));
+  }
+
+  private static MenuItem buildNavigationItem(
+      Optional<MenuItem> configuredItem,
+      ItemStack fallback,
+      boolean showCurrentPageAmount,
+      int currentPageNumber
+  ) {
+    MenuItem item = configuredItem.orElse(MenuItem.of(fallback));
+    if (!showCurrentPageAmount) return item;
+
+    ItemStack stack = item.stack();
+    int amount = Math.max(1, Math.min(currentPageNumber, stack.getMaxStackSize()));
+    stack.setAmount(amount);
+    return MenuItem.of(stack);
   }
 
   private void clearStickyForPagedArea(BukkitMenuView view, String areaId) {
@@ -495,26 +566,31 @@ public final class AsyncMenuRenderEngine {
 
     for (var raw : pagedOpt.get()) {
       var nav = raw.navigation();
+      int pageCount = Math.max(1, view.cachedPageCount(raw.id()));
+      int currentIndex = Math.min(Math.max(0, state.getIndex(raw.id())), pageCount - 1);
 
-      nav.previousSlot().ifPresent(prevSlot -> handlers.put(prevSlot, ctx -> {
-        int current = state.getIndex(raw.id());
-        if (current <= 0) return;
+      if (!(nav.hidePreviousOnFirstPage() && currentIndex <= 0)) {
+        nav.previousSlot().ifPresent(prevSlot -> handlers.put(prevSlot, ctx -> {
+          int current = state.getIndex(raw.id());
+          if (current <= 0) return;
 
-        state.setIndex(raw.id(), current - 1);
-        view.targetPageAreaRender(raw.id());
-        view.requestRender(RenderReason.PAGE_CHANGED);
-      }));
+          state.setIndex(raw.id(), current - 1);
+          view.targetPageAreaRender(raw.id());
+          view.requestRender(RenderReason.PAGE_CHANGED);
+        }));
+      }
 
-      nav.nextSlot().ifPresent(nextSlot -> handlers.put(nextSlot, ctx -> {
-        int current = state.getIndex(raw.id());
-        int pageCount = view.cachedPageCount(raw.id());
-        int maxIndex = Math.max(0, pageCount - 1);
-        if (current >= maxIndex) return;
+      if (!(nav.hideNextOnLastPage() && currentIndex >= pageCount - 1)) {
+        nav.nextSlot().ifPresent(nextSlot -> handlers.put(nextSlot, ctx -> {
+          int current = state.getIndex(raw.id());
+          int maxIndex = Math.max(0, view.cachedPageCount(raw.id()) - 1);
+          if (current >= maxIndex) return;
 
-        state.setIndex(raw.id(), current + 1);
-        view.targetPageAreaRender(raw.id());
-        view.requestRender(RenderReason.PAGE_CHANGED);
-      }));
+          state.setIndex(raw.id(), current + 1);
+          view.targetPageAreaRender(raw.id());
+          view.requestRender(RenderReason.PAGE_CHANGED);
+        }));
+      }
 
       nav.refreshSlot().ifPresent(refreshSlot -> handlers.put(refreshSlot, ctx -> {
         view.targetPageAreaRender(raw.id());
@@ -585,13 +661,27 @@ public final class AsyncMenuRenderEngine {
   private record RenderBundle(
       RenderPlan plan,
       Map<Integer, MenuSlot.MenuClickHandler> handlers,
-      List<RenderPopulateContext.PlannedHeadUpdate> plannedHeads,
+      List<PlannedHeadUpdate> plannedHeads,
       long renderToken
   ) {
     private RenderBundle {
       Objects.requireNonNull(plan, "plan must not be null");
       Objects.requireNonNull(handlers, "handlers must not be null");
       Objects.requireNonNull(plannedHeads, "plannedHeads must not be null");
+    }
+  }
+
+  private record MaterializedRender(RenderResult result, List<PlannedHeadUpdate> plannedHeads) {
+    private MaterializedRender {
+      Objects.requireNonNull(result, "result must not be null");
+      Objects.requireNonNull(plannedHeads, "plannedHeads must not be null");
+    }
+  }
+
+  private record PlannedHeadUpdate(int slot, MenuItem placeholder, CompletableFuture<ItemStack> future) {
+    private PlannedHeadUpdate {
+      Objects.requireNonNull(placeholder, "placeholder must not be null");
+      Objects.requireNonNull(future, "future must not be null");
     }
   }
 

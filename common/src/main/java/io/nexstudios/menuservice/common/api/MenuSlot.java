@@ -28,7 +28,7 @@ public interface MenuSlot {
   void clear();
 
   /**
-   * NEW: allows deferring Bukkit ItemStack/MenuItem creation to the main thread.
+   * allows deferring Bukkit ItemStack/MenuItem creation to the main thread.
    * The supplier MUST be safe to run on the main thread.
    */
   void setPlannedItem(MenuItemSupplier supplier);

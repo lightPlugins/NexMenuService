@@ -9,6 +9,7 @@ import io.nexstudios.menuservice.common.api.item.MenuItemSupplier;
 import io.nexstudios.menuservice.common.api.render.RenderPlan;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.HashMap;
@@ -95,7 +96,7 @@ public final class RenderPopulateContext implements MenuPopulateContext {
         try {
           ItemStack resolved = headFuture.getNow(null);
           if (resolved != null) {
-            setPlannedItem(() -> MenuItem.of(resolved));
+            setPlannedItem(() -> mergePlaceholderMeta(placeholder, resolved));
             return;
           }
         } catch (CompletionException ignored) {
@@ -133,6 +134,21 @@ public final class RenderPopulateContext implements MenuPopulateContext {
 
   public List<PlannedHeadUpdate> plannedHeads() {
     return List.copyOf(plannedHeads);
+  }
+
+  private static MenuItem mergePlaceholderMeta(MenuItem placeholder, ItemStack resolvedStack) {
+    ItemStack merged = resolvedStack.clone();
+    ItemMeta placeholderMeta = placeholder.stack().getItemMeta();
+    ItemMeta mergedMeta = merged.getItemMeta();
+
+    if (placeholderMeta != null && mergedMeta != null) {
+      if (placeholderMeta.hasItemName()) mergedMeta.itemName(placeholderMeta.itemName());
+      if (placeholderMeta.hasDisplayName()) mergedMeta.displayName(placeholderMeta.displayName());
+      if (placeholderMeta.hasLore()) mergedMeta.lore(placeholderMeta.lore());
+      merged.setItemMeta(mergedMeta);
+    }
+
+    return MenuItem.of(merged);
   }
 
   public record PlannedHeadUpdate(int slot, MenuItem placeholder, CompletableFuture<ItemStack> future, long renderToken) {
