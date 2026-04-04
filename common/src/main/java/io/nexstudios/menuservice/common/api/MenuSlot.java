@@ -3,8 +3,11 @@ package io.nexstudios.menuservice.common.api;
 import io.nexstudios.menuservice.common.api.interaction.ClickAction;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.item.MenuItemSupplier;
+import org.bukkit.Material;
+import org.bukkit.inventory.ItemStack;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Slot API used during population/rendering.
@@ -29,6 +32,24 @@ public interface MenuSlot {
    * The supplier MUST be safe to run on the main thread.
    */
   void setPlannedItem(MenuItemSupplier supplier);
+
+  /**
+   * Sets a planned player head with a default placeholder.
+   *
+   * Implementations may show a default player head immediately and replace it once
+   * the provided future completes successfully.
+   */
+  default void setPlannedHead(CompletableFuture<ItemStack> headFuture) {
+    setPlannedHead(MenuItem.of(new ItemStack(Material.PLAYER_HEAD, 1)), headFuture);
+  }
+
+  /**
+   * Sets a planned player head using the supplied placeholder immediately.
+   *
+   * The placeholder is shown first (for example with lore, name, or other text),
+   * then replaced with the loaded head while keeping placeholder text metadata.
+   */
+  void setPlannedHead(MenuItem placeholder, CompletableFuture<ItemStack> headFuture);
 
   /**
    * Registers a click handler for this slot.

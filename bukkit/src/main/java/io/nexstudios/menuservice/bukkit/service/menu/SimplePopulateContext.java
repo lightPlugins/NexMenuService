@@ -7,11 +7,14 @@ import io.nexstudios.menuservice.common.api.MenuSlot;
 import io.nexstudios.menuservice.common.api.ViewerRef;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.item.MenuItemSupplier;
+import org.bukkit.Material;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Simple synchronous populate context (phase 1).
@@ -66,6 +69,25 @@ final class SimplePopulateContext implements MenuPopulateContext {
         MenuItem item = supplier.get();
         MenuSlot.requireNonNullItem(item);
         items.put(slot, item);
+      }
+
+      @Override
+      public void setPlannedHead(CompletableFuture<ItemStack> headFuture) {
+        setPlannedHead(MenuItem.of(new ItemStack(Material.PLAYER_HEAD, 1)), headFuture);
+      }
+
+      @Override
+      public void setPlannedHead(MenuItem placeholder, CompletableFuture<ItemStack> headFuture) {
+        MenuSlot.requireNonNullItem(placeholder);
+        Objects.requireNonNull(headFuture, "headFuture must not be null");
+
+        ItemStack resolved = headFuture.getNow(null);
+        if (resolved != null) {
+          items.put(slot, MenuItem.of(resolved));
+          return;
+        }
+
+        items.put(slot, placeholder);
       }
 
       @Override

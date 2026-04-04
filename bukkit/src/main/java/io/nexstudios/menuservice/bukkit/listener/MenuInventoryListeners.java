@@ -493,6 +493,11 @@ public final class MenuInventoryListeners implements Listener {
       return;
     }
 
+    // If a new menu was opened for the same viewer, Bukkit may still deliver the close
+    // event for the previous inventory. Ignore those stale events so we do not close
+    // the newly opened view by accident.
+    if (view.inventory() != top || !view.key().equals(holder.menuKey())) return;
+
     view.close(CloseReason.PLAYER_CLOSED);
   }
 

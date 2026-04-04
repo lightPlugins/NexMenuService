@@ -80,6 +80,11 @@ public final class BukkitMenuView implements MenuView {
    */
   private final ConcurrentMap<Integer, MenuItem> stickyOverrides = new ConcurrentHashMap<>();
 
+  /**
+   * Monotonically increasing token for the latest requested render.
+   */
+  private final AtomicLong renderToken = new AtomicLong(0L);
+
   private final PageControlStateStore pageControlStateStore;
 
 
@@ -174,7 +179,12 @@ public final class BukkitMenuView implements MenuView {
 
   public void requestRender(RenderReason reason) {
     if (closed.get()) return;
+    renderToken.incrementAndGet();
     renderEngine.requestRender(this, reason);
+  }
+
+  public long renderToken() {
+    return renderToken.get();
   }
 
   public void clearStickySlots(Set<Integer> slots) {
@@ -302,7 +312,10 @@ public final class BukkitMenuView implements MenuView {
         });
       });
 
-      if (player.isOnline()) {
+      // Keep the client cursor stable when we are only transitioning into another menu.
+      // The subsequent openInventory() call will replace the old view without a visible
+      // close/open flicker.
+      if (player.isOnline() && reason != CloseReason.OPENED_OTHER_MENU) {
         player.closeInventory();
       }
     }

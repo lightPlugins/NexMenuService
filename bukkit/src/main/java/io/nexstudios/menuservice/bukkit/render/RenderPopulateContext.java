@@ -8,30 +8,37 @@ import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.item.MenuItemSupplier;
 import io.nexstudios.menuservice.common.api.render.RenderPlan;
 import org.bukkit.Bukkit;
+import org.bukkit.Material;
+import org.bukkit.inventory.ItemStack;
 
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-
-// ... existing code ...
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 public final class RenderPopulateContext implements MenuPopulateContext {
 
   private final MenuKey key;
   private final ViewerRef viewer;
   private final int size;
+  private final long renderToken;
 
   private final Map<Integer, MenuItemSupplier> items = new HashMap<>();
   private final Set<Integer> cleared = new HashSet<>();
   private final Map<Integer, MenuSlot.MenuClickHandler> clickHandlers = new HashMap<>();
+  private final List<PlannedHeadUpdate> plannedHeads = new ArrayList<>();
 
-  public RenderPopulateContext(MenuKey key, ViewerRef viewer, int size) {
+  public RenderPopulateContext(MenuKey key, ViewerRef viewer, int size, long renderToken) {
     this.key = Objects.requireNonNull(key, "key must not be null");
     this.viewer = Objects.requireNonNull(viewer, "viewer must not be null");
     if (size < 1) throw new IllegalArgumentException("size must be >= 1");
     this.size = size;
+    this.renderToken = renderToken;
   }
 
   @Override
@@ -74,6 +81,31 @@ public final class RenderPopulateContext implements MenuPopulateContext {
       }
 
       @Override
+      public void setPlannedHead(CompletableFuture<ItemStack> headFuture) {
+        setPlannedHead(MenuItem.of(new ItemStack(Material.PLAYER_HEAD, 1)), headFuture);
+      }
+
+      @Override
+      public void setPlannedHead(MenuItem placeholder, CompletableFuture<ItemStack> headFuture) {
+        MenuSlot.requireNonNullItem(placeholder);
+        Objects.requireNonNull(headFuture, "headFuture must not be null");
+
+        setPlannedItem(() -> placeholder);
+
+        try {
+          ItemStack resolved = headFuture.getNow(null);
+          if (resolved != null) {
+            setPlannedItem(() -> MenuItem.of(resolved));
+            return;
+          }
+        } catch (CompletionException ignored) {
+          // Fall through to the default placeholder head.
+        }
+
+        plannedHeads.add(new PlannedHeadUpdate(slot, placeholder, headFuture, renderToken));
+      }
+
+      @Override
       public void clear() {
         items.remove(slot);
         cleared.add(slot);
@@ -97,5 +129,16 @@ public final class RenderPopulateContext implements MenuPopulateContext {
 
   public Map<Integer, MenuSlot.MenuClickHandler> clickHandlers() {
     return Map.copyOf(clickHandlers);
+  }
+
+  public List<PlannedHeadUpdate> plannedHeads() {
+    return List.copyOf(plannedHeads);
+  }
+
+  public record PlannedHeadUpdate(int slot, MenuItem placeholder, CompletableFuture<ItemStack> future, long renderToken) {
+    public PlannedHeadUpdate {
+      Objects.requireNonNull(placeholder, "placeholder must not be null");
+      Objects.requireNonNull(future, "future must not be null");
+    }
   }
 }

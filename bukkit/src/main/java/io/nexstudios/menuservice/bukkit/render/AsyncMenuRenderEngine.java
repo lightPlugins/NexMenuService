@@ -25,6 +25,7 @@ import io.nexstudios.menuservice.common.api.render.RenderReason;
 import io.nexstudios.menuservice.common.api.render.RenderResult;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
@@ -109,8 +110,9 @@ public final class AsyncMenuRenderEngine {
   private RenderBundle render(BukkitMenuView view, RenderReason reason) {
     MenuDefinition def = view.definition();
     int size = view.inventory().getSize();
+    long renderToken = view.renderToken();
 
-    RenderPopulateContext ctx = new RenderPopulateContext(view.key(), view.viewer(), size);
+    RenderPopulateContext ctx = new RenderPopulateContext(view.key(), view.viewer(), size, renderToken);
 
     // Populator is allowed to enqueue planned items (suppliers).
     def.populator().populate(ctx);
@@ -132,7 +134,7 @@ public final class AsyncMenuRenderEngine {
     mergedHandlers.putAll(paging.handlers());
     mergedHandlers.putAll(buttons.handlers());
 
-    return new RenderBundle(merged, Map.copyOf(mergedHandlers));
+    return new RenderBundle(merged, Map.copyOf(mergedHandlers), ctx.plannedHeads(), renderToken);
   }
 
   private static RenderPlan merge(RenderPlan a, RenderPlan b) {
@@ -181,6 +183,41 @@ public final class AsyncMenuRenderEngine {
     Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>(bundle.handlers());
     injectPagingNavigationHandlers(view, handlers);
     ClickHandlerStore.attach(inv, handlers);
+
+    registerPlannedHeads(view, bundle.plannedHeads(), bundle.renderToken());
+  }
+
+  private void registerPlannedHeads(BukkitMenuView view, List<RenderPopulateContext.PlannedHeadUpdate> plannedHeads, long renderToken) {
+    if (plannedHeads == null || plannedHeads.isEmpty()) return;
+
+    for (RenderPopulateContext.PlannedHeadUpdate plannedHead : plannedHeads) {
+      plannedHead.future().whenComplete((stack, err) -> {
+        if (err != null || stack == null || view.isClosed()) return;
+
+        Bukkit.getScheduler().runTask(plugin, () -> {
+          if (view.isClosed() || view.renderToken() != renderToken || view.isStickySlot(plannedHead.slot())) return;
+          view.patchSlotNow(plannedHead.slot(), mergePlaceholderMeta(plannedHead.placeholder(), stack));
+        });
+      });
+    }
+  }
+
+  private static MenuItem mergePlaceholderMeta(MenuItem placeholder, ItemStack resolvedStack) {
+    Objects.requireNonNull(placeholder, "placeholder must not be null");
+    Objects.requireNonNull(resolvedStack, "resolvedStack must not be null");
+
+    ItemStack merged = resolvedStack.clone();
+    ItemMeta placeholderMeta = placeholder.stack().getItemMeta();
+    ItemMeta mergedMeta = merged.getItemMeta();
+
+    if (placeholderMeta != null && mergedMeta != null) {
+      if (placeholderMeta.hasLore()) {
+        mergedMeta.lore(placeholderMeta.lore());
+      }
+      merged.setItemMeta(mergedMeta);
+    }
+
+    return MenuItem.of(merged);
   }
 
   private void applyPatchToInventoryFast(Inventory inv, RenderPatch patch) {
@@ -545,10 +582,16 @@ public final class AsyncMenuRenderEngine {
     final AtomicBoolean pending = new AtomicBoolean(false);
   }
 
-  private record RenderBundle(RenderPlan plan, Map<Integer, MenuSlot.MenuClickHandler> handlers) {
+  private record RenderBundle(
+      RenderPlan plan,
+      Map<Integer, MenuSlot.MenuClickHandler> handlers,
+      List<RenderPopulateContext.PlannedHeadUpdate> plannedHeads,
+      long renderToken
+  ) {
     private RenderBundle {
       Objects.requireNonNull(plan, "plan must not be null");
       Objects.requireNonNull(handlers, "handlers must not be null");
+      Objects.requireNonNull(plannedHeads, "plannedHeads must not be null");
     }
   }
 
