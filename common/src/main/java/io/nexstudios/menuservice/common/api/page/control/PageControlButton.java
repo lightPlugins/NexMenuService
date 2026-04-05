@@ -2,6 +2,7 @@ package io.nexstudios.menuservice.common.api.page.control;
 
 import io.nexstudios.menuservice.common.api.MenuKey;
 import io.nexstudios.menuservice.common.api.MenuView;
+import io.nexstudios.menuservice.common.api.interaction.ClickAction;
 import io.nexstudios.menuservice.common.api.ViewerRef;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
 
@@ -42,7 +43,8 @@ public interface PageControlButton {
       ViewerRef viewer,
       String areaId,
       PageControl control,
-      PageControlStateStore stateStore
+      PageControlStateStore stateStore,
+      ClickAction action
   ) {
     public ClickContext {
       Objects.requireNonNull(view, "view must not be null");
@@ -51,6 +53,7 @@ public interface PageControlButton {
       Objects.requireNonNull(areaId, "areaId must not be null");
       Objects.requireNonNull(control, "control must not be null");
       Objects.requireNonNull(stateStore, "stateStore must not be null");
+      Objects.requireNonNull(action, "action must not be null");
     }
 
     public void requestAreaRefresh() {

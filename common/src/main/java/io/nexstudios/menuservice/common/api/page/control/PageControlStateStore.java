@@ -27,4 +27,20 @@ public interface PageControlStateStore {
     setActiveModeId(viewer, menuKey, areaId, control.controlId(), next);
     return next;
   }
+
+  default String cycleToPreviousMode(
+      ViewerRef viewer,
+      MenuKey menuKey,
+      String areaId,
+      PageControl control
+  ) {
+    String current = getActiveModeId(viewer, menuKey, areaId, control.controlId()).orElse(control.defaultModeId());
+
+    List<String> modes = control.modeIds();
+    int idx = modes.indexOf(current);
+    String previous = (idx < 0) ? control.defaultModeId() : modes.get((idx - 1 + modes.size()) % modes.size());
+
+    setActiveModeId(viewer, menuKey, areaId, control.controlId(), previous);
+    return previous;
+  }
 }

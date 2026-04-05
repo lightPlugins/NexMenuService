@@ -468,7 +468,8 @@ public final class AsyncMenuRenderEngine {
             view.viewer(),
             btn.areaId(),
             control,
-            stateStore
+            stateStore,
+            ctx.action()
         )));
       } catch (RuntimeException ex) {
         log(Level.SEVERE, "Failed to render page control button at slot " + btn.slot() + " for " + menuContext(view) + ".", ex);
