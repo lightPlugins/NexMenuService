@@ -23,6 +23,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Bukkit/Paper implementation of {@link MenuService}.
@@ -58,6 +60,17 @@ public final class BukkitMenuService implements MenuService {
 
     this.inventoryListeners = new MenuInventoryListeners(this);
     this.lifecycleListeners = new MenuLifecycleListeners(this, plugin);
+  }
+
+  public Logger logger() {
+    return plugin.getLogger();
+  }
+
+  void sendViewerMessage(UUID viewerId, String message) {
+    Player player = Bukkit.getPlayer(viewerId);
+    if (player != null && player.isOnline()) {
+      player.sendMessage(message);
+    }
   }
 
   public boolean allowGuiInteraction(UUID viewerId) {
@@ -117,8 +130,11 @@ public final class BukkitMenuService implements MenuService {
     for (BukkitMenuView view : openViews.values()) {
       try {
         view.close(CloseReason.PLUGIN_DISABLED);
-      } catch (Exception ignored) {
-        // Avoid failing shutdown due to one bad view.
+      } catch (Exception ex) {
+        logger().log(Level.SEVERE,
+            "Failed to close menu '" + view.key() + "' for viewer " + view.viewer().name() +
+                " (" + view.viewer().uniqueId() + ") during shutdown.",
+            ex);
       }
     }
     openViews.clear();
@@ -136,47 +152,61 @@ public final class BukkitMenuService implements MenuService {
     Objects.requireNonNull(viewer, "viewer must not be null");
     Objects.requireNonNull(key, "key must not be null");
 
-    MenuDefinition def = registry.find(key).orElseThrow(() -> new MenuNotRegisteredException(key));
+    try {
+      MenuDefinition def = registry.find(key).orElseThrow(() -> new MenuNotRegisteredException(key));
 
-    Player player = Bukkit.getPlayer(viewer.uniqueId());
-    if (player == null) {
-      throw new IllegalStateException("Viewer is not online: " + viewer.uniqueId());
+      Player player = Bukkit.getPlayer(viewer.uniqueId());
+      if (player == null) {
+        throw new IllegalStateException("Viewer is not online: " + viewer.uniqueId());
+      }
+
+      int size = def.rows() * 9;
+      Inventory inv = Bukkit.createInventory(
+          new PaperMenuHolder(viewer.uniqueId(), key),
+          size,
+          Component.text(def.title())
+      );
+
+      BukkitMenuView view = new BukkitMenuView(
+          this,
+          key,
+          viewer,
+          def,
+          inv,
+          Instant.now(),
+          renderEngine,
+          pageControlStateStore
+      );
+
+      // schedule first auto refresh relative to now
+      Duration interval = renderEngine.resolveInterval(def);
+      view.scheduleNextAutoRefreshAtMillis(System.currentTimeMillis() + Math.max(50L, interval.toMillis()));
+
+      BukkitMenuView existing = openViews.put(viewer.uniqueId(), view);
+      if (existing != null) {
+        existing.close(CloseReason.OPENED_OTHER_MENU);
+      }
+
+      player.openInventory(inv);
+
+      // Initial render async -> diff -> apply on main thread
+      view.requestOpenRender();
+    } catch (MenuNotRegisteredException ex) {
+      logger().log(Level.WARNING,
+          "Cannot open menu '" + key + "' for viewer " + viewer.name() +
+              " (" + viewer.uniqueId() + "): the menu is not registered.",
+          ex);
+      sendViewerMessage(viewer.uniqueId(),
+          "The requested menu is not registered. Please contact an administrator.");
+    } catch (RuntimeException ex) {
+      openViews.remove(viewer.uniqueId());
+      logger().log(Level.SEVERE,
+          "Failed to open menu '" + key + "' for viewer " + viewer.name() +
+              " (" + viewer.uniqueId() + ").",
+          ex);
+      sendViewerMessage(viewer.uniqueId(),
+          "An error occurred while opening this menu. Please check the server log.");
     }
-
-    // Close previous view if present
-    BukkitMenuView existing = openViews.get(viewer.uniqueId());
-    if (existing != null) {
-      existing.close(CloseReason.OPENED_OTHER_MENU);
-    }
-
-    int size = def.rows() * 9;
-    Inventory inv = Bukkit.createInventory(
-        new PaperMenuHolder(viewer.uniqueId(), key),
-        size,
-        Component.text(def.title())
-    );
-
-    BukkitMenuView view = new BukkitMenuView(
-        this,
-        key,
-        viewer,
-        def,
-        inv,
-        Instant.now(),
-        renderEngine,
-        pageControlStateStore
-    );
-
-    // schedule first auto refresh relative to now
-    Duration interval = renderEngine.resolveInterval(def);
-    view.scheduleNextAutoRefreshAtMillis(System.currentTimeMillis() + Math.max(50L, interval.toMillis()));
-
-    openViews.put(viewer.uniqueId(), view);
-
-    player.openInventory(inv);
-
-    // Initial render async -> diff -> apply on main thread
-    view.requestOpenRender();
   }
 
   @Override

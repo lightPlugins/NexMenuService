@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.logging.Level;
 
 public final class MenuInventoryListeners implements Listener {
 
@@ -140,9 +141,8 @@ public final class MenuInventoryListeners implements Listener {
 
       if (policy.notifyBottomInventoryClicks()) {
         var hooksOpt = view.definition().interactionHooks();
-        hooksOpt.ifPresent(hooks -> interaction.clickedItem().ifPresent(clicked -> {
-          hooks.onBottomInventoryClick(viewer, clicked, interaction.clickAction());
-        }));
+        hooksOpt.ifPresent(hooks -> interaction.clickedItem()
+            .ifPresent(clicked -> hooks.onBottomInventoryClick(viewer, clicked, interaction.clickAction())));
       }
 
       return;
@@ -341,7 +341,16 @@ public final class MenuInventoryListeners implements Listener {
     var clickHandler = ClickHandlerStore.find(top, slot);
     if (clickHandler == null) return;
 
-    clickHandler.handle(new SimpleClickContext(view, viewer, slot, BukkitInteractionMapper.mapClickAction(event)));
+    try {
+      clickHandler.handle(new SimpleClickContext(view, viewer, slot, BukkitInteractionMapper.mapClickAction(event)));
+    } catch (RuntimeException ex) {
+      service.logger().log(Level.SEVERE,
+          "Failed to execute a click handler for menu '" + view.key() + "' and viewer " + viewer.name() +
+              " (" + viewer.uniqueId() + ") at slot " + slot + ".",
+          ex);
+      event.setCancelled(true);
+      event.getWhoClicked().sendMessage("An error occurred while handling this menu interaction. Please check the server log.");
+    }
   }
 
   @EventHandler
@@ -383,9 +392,17 @@ public final class MenuInventoryListeners implements Listener {
       return;
     }
 
-    boolean applied = tryApplyDragDeposit(event, view, top, depositPolicyOpt.get(), depositHandlerOpt.get());
-    if (!applied) {
+    try {
+      boolean applied = tryApplyDragDeposit(event, view, top, depositPolicyOpt.get(), depositHandlerOpt.get());
+      if (!applied) {
+        event.setCancelled(true);
+      }
+    } catch (RuntimeException ex) {
+      service.logger().log(Level.SEVERE,
+          "Failed to process a drag interaction for menu '" + view.key() + "' and viewer " + holder.viewerId() + ".",
+          ex);
       event.setCancelled(true);
+      event.getWhoClicked().sendMessage("An error occurred while handling this menu interaction. Please check the server log.");
     }
   }
 

@@ -25,6 +25,7 @@ import io.nexstudios.menuservice.common.api.render.RenderPlan;
 import io.nexstudios.menuservice.common.api.render.RenderReason;
 import io.nexstudios.menuservice.common.api.render.RenderResult;
 import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.Material;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -41,6 +42,7 @@ import java.util.Set;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
 import io.nexstudios.menuservice.common.api.render.*;
 
 public final class AsyncMenuRenderEngine {
@@ -68,6 +70,18 @@ public final class AsyncMenuRenderEngine {
 
   public Plugin plugin() {
     return plugin;
+  }
+
+  private void log(Level level, String message) {
+    plugin.getLogger().log(level, message);
+  }
+
+  private void log(Level level, String message, Throwable throwable) {
+    plugin.getLogger().log(level, message, throwable);
+  }
+
+  private static String menuContext(BukkitMenuView view) {
+    return "menu '" + view.key() + "' for viewer " + view.viewer().name() + " (" + view.viewer().uniqueId() + ")";
   }
 
   public void shutdown() {
@@ -98,8 +112,24 @@ public final class AsyncMenuRenderEngine {
         .supplyAsync(() -> render(view, reason), executor)
         .whenComplete((bundle, err) -> Bukkit.getScheduler().runTask(plugin, () -> {
           try {
-            if (err != null || bundle == null || view.isClosed()) return;
-            apply(view, bundle);
+            if (err != null) {
+              log(Level.SEVERE, "Failed to build " + menuContext(view) + " during render reason " + reason + ".", err);
+              return;
+            }
+
+            if (bundle == null) {
+              log(Level.SEVERE, "Menu render returned no result for " + menuContext(view) + " during render reason " + reason + ".");
+              return;
+            }
+
+            if (view.isClosed()) return;
+
+            try {
+              apply(view, bundle);
+            } catch (RuntimeException ex) {
+              log(Level.SEVERE, "Failed to apply rendered content for " + menuContext(view) + " during render reason " + reason + ".", ex);
+              ex.printStackTrace();
+            }
           } finally {
             gate.rendering.set(false);
             if (gate.pending.get() && !view.isClosed()) {
@@ -116,17 +146,41 @@ public final class AsyncMenuRenderEngine {
 
     RenderPopulateContext ctx = new RenderPopulateContext(view.key(), view.viewer(), size, renderToken);
 
-    // Populator is allowed to enqueue planned items (suppliers).
-    def.populator().populate(ctx);
-
     Optional<String> pageTarget = Optional.empty();
     if (reason == RenderReason.PAGE_CHANGED) {
       pageTarget = view.consumePageAreaRenderTarget();
-      pageTarget.ifPresent(areaId -> clearStickyForPagedArea(view, areaId));
+      pageTarget.ifPresent(areaId -> {
+        try {
+          clearStickyForPagedArea(view, areaId);
+        } catch (RuntimeException ex) {
+          log(Level.SEVERE, "Failed to clear sticky slots for " + menuContext(view) + " and page area '" + areaId + "'.", ex);
+          ex.printStackTrace();
+        }
+      });
     }
 
-    PagingBundle paging = renderPaging(view, pageTarget);
-    ButtonBundle buttons = renderControlButtons(view);
+    try {
+      def.populator().populate(ctx);
+    } catch (RuntimeException ex) {
+      log(Level.SEVERE, "Failed to populate " + menuContext(view) + " during render reason " + reason + ".", ex);
+      ex.printStackTrace();
+    }
+
+    PagingBundle paging = PagingBundle.empty();
+    try {
+      paging = renderPaging(view, pageTarget);
+    } catch (RuntimeException ex) {
+      log(Level.SEVERE, "Failed to render paging content for " + menuContext(view) + " during render reason " + reason + ".", ex);
+      ex.printStackTrace();
+    }
+
+    ButtonBundle buttons = ButtonBundle.empty();
+    try {
+      buttons = renderControlButtons(view);
+    } catch (RuntimeException ex) {
+      log(Level.SEVERE, "Failed to render paging control buttons for " + menuContext(view) + " during render reason " + reason + ".", ex);
+      ex.printStackTrace();
+    }
 
     RenderPlan base = ctx.toRenderPlan();
     RenderPlan merged = merge(base, paging.plan());
@@ -164,7 +218,7 @@ public final class AsyncMenuRenderEngine {
     Inventory inv = view.inventory();
 
     // Materialize planned items on the main thread
-    MaterializedRender materialized = materialize(bundle.plan());
+    MaterializedRender materialized = materialize(view, bundle.plan());
     RenderResult result = materialized.result();
 
     // Main-thread only: inject defaults + apply decorations (touch Bukkit internals)
@@ -256,7 +310,7 @@ public final class AsyncMenuRenderEngine {
     inv.setContents(contents);
   }
 
-  private MaterializedRender materialize(RenderPlan plan) {
+  private MaterializedRender materialize(BukkitMenuView view, RenderPlan plan) {
     if (plan == null) return new MaterializedRender(RenderResult.empty(), List.of());
 
     Map<Integer, MenuItem> items = new HashMap<>();
@@ -273,8 +327,8 @@ public final class AsyncMenuRenderEngine {
         ItemStack resolved = null;
         try {
           resolved = plannedSupplier.headFuture().getNow(null);
-        } catch (CompletionException ignored) {
-          // Keep the placeholder; the future will be handled asynchronously if it resolves later.
+        } catch (CompletionException ex) {
+          log(Level.WARNING, "Planned item future failed while materializing " + menuContext(view) + " at slot " + slot + ".", ex);
         }
 
         if (resolved != null) {
@@ -285,8 +339,12 @@ public final class AsyncMenuRenderEngine {
         continue;
       }
 
-      MenuItem item = supplier.get();
-      if (item != null) items.put(slot, item);
+      try {
+        MenuItem item = supplier.get();
+        if (item != null) items.put(slot, item);
+      } catch (RuntimeException ex) {
+        log(Level.SEVERE, "Failed to resolve menu item supplier for " + menuContext(view) + " at slot " + slot + ".", ex);
+      }
     }
 
     return new MaterializedRender(
@@ -320,46 +378,50 @@ public final class AsyncMenuRenderEngine {
     PageControlStateStore stateStore = view.pageControlStateStore();
 
     for (PagedAreaDefinition<?> raw : pagedOpt.get()) {
-      if (targetAreaId.isPresent() && !raw.id().equals(targetAreaId.get())) {
-        continue;
-      }
-
-      @SuppressWarnings("unchecked")
-      PagedAreaDefinition<Object> area = (PagedAreaDefinition<Object>) raw;
-
-      List<Object> elements = new ArrayList<>(area.load(view.key(), view.viewer()));
-      elements = applyControlsForArea(controls, stateStore, view, area.id(), elements);
-
-      var model = area.model();
-      int pageCount = model.pageCountFor(elements.size());
-      view.updatePageCount(area.id(), pageCount);
-
-      int requestedIndex = state.getIndex(area.id());
-      int clampedIndex = model.clampPageIndex(requestedIndex, elements.size());
-      if (clampedIndex != requestedIndex) {
-        state.setIndex(area.id(), clampedIndex);
-      }
-
-      RenderPlan page = PageRenderer.renderPage(area, clampedIndex, elements);
-      items.putAll(page.slotsToItems());
-      cleared.addAll(page.clearedSlots());
-
-      final List<Object> finalElements = elements;
-
-      area.clickHandler().ifPresent(ch -> {
-        int start = model.startIndex(clampedIndex);
-        int end = model.endExclusiveIndex(clampedIndex, finalElements.size());
-        List<Object> slice = finalElements.subList(start, end);
-
-        List<Integer> targetSlots = PageSlotMapper.slotsFor(area.bounds(), slice.size());
-        for (int i = 0; i < slice.size(); i++) {
-          Object element = slice.get(i);
-          int globalIndex = start + i;
-          int slot = targetSlots.get(i);
-
-          handlers.put(slot, ctx -> ch.onClick(element, globalIndex, ctx));
+      try {
+        if (targetAreaId.isPresent() && !raw.id().equals(targetAreaId.get())) {
+          continue;
         }
-      });
+
+        @SuppressWarnings("unchecked")
+        PagedAreaDefinition<Object> area = (PagedAreaDefinition<Object>) raw;
+
+        List<Object> elements = new ArrayList<>(area.load(view.key(), view.viewer()));
+        elements = applyControlsForArea(controls, stateStore, view, area.id(), elements);
+
+        var model = area.model();
+        int pageCount = model.pageCountFor(elements.size());
+        view.updatePageCount(area.id(), pageCount);
+
+        int requestedIndex = state.getIndex(area.id());
+        int clampedIndex = model.clampPageIndex(requestedIndex, elements.size());
+        if (clampedIndex != requestedIndex) {
+          state.setIndex(area.id(), clampedIndex);
+        }
+
+        RenderPlan page = PageRenderer.renderPage(area, clampedIndex, elements);
+        items.putAll(page.slotsToItems());
+        cleared.addAll(page.clearedSlots());
+
+        final List<Object> finalElements = elements;
+
+        area.clickHandler().ifPresent(ch -> {
+          int start = model.startIndex(clampedIndex);
+          int end = model.endExclusiveIndex(clampedIndex, finalElements.size());
+          List<Object> slice = finalElements.subList(start, end);
+
+          List<Integer> targetSlots = PageSlotMapper.slotsFor(area.bounds(), slice.size());
+          for (int i = 0; i < slice.size(); i++) {
+            Object element = slice.get(i);
+            int globalIndex = start + i;
+            int slot = targetSlots.get(i);
+
+            handlers.put(slot, ctx -> ch.onClick(element, globalIndex, ctx));
+          }
+        });
+      } catch (RuntimeException ex) {
+        log(Level.SEVERE, "Failed to render paged area '" + raw.id() + "' for " + menuContext(view) + ".", ex);
+      }
     }
 
     return new PagingBundle(
@@ -379,34 +441,38 @@ public final class AsyncMenuRenderEngine {
     Map<Integer, MenuSlot.MenuClickHandler> handlers = new HashMap<>();
 
     for (PageControlButton btn : buttonsOpt.get()) {
-      PageControlBinding binding = null;
-      for (PageControlBinding b : controls) {
-        if (!b.areaId().equals(btn.areaId())) continue;
-        if (!b.controlId().equals(btn.controlId())) continue;
-        binding = b;
-        break;
+      try {
+        PageControlBinding binding = null;
+        for (PageControlBinding b : controls) {
+          if (!b.areaId().equals(btn.areaId())) continue;
+          if (!b.controlId().equals(btn.controlId())) continue;
+          binding = b;
+          break;
+        }
+        if (binding == null) continue;
+
+        var control = binding.control();
+        var activeModeId = stateStore.getActiveModeId(view.viewer(), view.key(), btn.areaId(), control.controlId());
+
+        items.put(btn.slot(), () -> btn.render(new PageControlButton.RenderContext(
+            view.key(),
+            view.viewer(),
+            btn.areaId(),
+            control,
+            activeModeId
+        )));
+
+        handlers.put(btn.slot(), ctx -> btn.onClick(new PageControlButton.ClickContext(
+            ctx.view(),
+            view.key(),
+            view.viewer(),
+            btn.areaId(),
+            control,
+            stateStore
+        )));
+      } catch (RuntimeException ex) {
+        log(Level.SEVERE, "Failed to render page control button at slot " + btn.slot() + " for " + menuContext(view) + ".", ex);
       }
-      if (binding == null) continue;
-
-      var control = binding.control();
-      var activeModeId = stateStore.getActiveModeId(view.viewer(), view.key(), btn.areaId(), control.controlId());
-
-      items.put(btn.slot(), () -> btn.render(new PageControlButton.RenderContext(
-          view.key(),
-          view.viewer(),
-          btn.areaId(),
-          control,
-          activeModeId
-      )));
-
-      handlers.put(btn.slot(), ctx -> btn.onClick(new PageControlButton.ClickContext(
-          ctx.view(),
-          view.key(),
-          view.viewer(),
-          btn.areaId(),
-          control,
-          stateStore
-      )));
     }
 
     return new ButtonBundle(

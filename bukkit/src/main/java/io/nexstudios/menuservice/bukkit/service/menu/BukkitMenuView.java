@@ -31,6 +31,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Level;
 
 /**
  * Bukkit menu view instance for a single viewer.
@@ -293,8 +294,11 @@ public final class BukkitMenuView implements MenuView {
     definition.interactionHooks().ifPresent(hooks -> {
       try {
         hooks.onClose(key, viewer, reason, ClosePhase.BEFORE_CLOSE);
-      } catch (Exception ignored) {
-        // do not fail close because of hook exceptions
+      } catch (Exception ex) {
+        service.logger().log(Level.SEVERE,
+            "Failed to run BEFORE_CLOSE hook for menu '" + key + "' and viewer " + viewer.name() +
+                " (" + viewer.uniqueId() + ") with close reason " + reason + ".",
+            ex);
       }
     });
 
@@ -305,9 +309,16 @@ public final class BukkitMenuView implements MenuView {
         depositLedger.ifPresent(ledger -> {
           var snap = ledger.snapshot();
           if (!snap.isEmpty()) {
-            DepositReturnStrategy strategy = policy.returnStrategy();
-            depositReturner.returnDeposits(player, snap, strategy);
-            ledger.clearAll();
+            try {
+              DepositReturnStrategy strategy = policy.returnStrategy();
+              depositReturner.returnDeposits(player, snap, strategy);
+              ledger.clearAll();
+            } catch (Exception ex) {
+              service.logger().log(Level.SEVERE,
+                  "Failed to return deposited items while closing menu '" + key + "' for viewer " + viewer.name() +
+                      " (" + viewer.uniqueId() + ") with close reason " + reason + ".",
+                  ex);
+            }
           }
         });
       });
@@ -324,8 +335,11 @@ public final class BukkitMenuView implements MenuView {
     definition.interactionHooks().ifPresent(hooks -> {
       try {
         hooks.onClose(key, viewer, reason, ClosePhase.AFTER_CLOSE);
-      } catch (Exception ignored) {
-        // do not fail close because of hook exceptions
+      } catch (Exception ex) {
+        service.logger().log(Level.SEVERE,
+            "Failed to run AFTER_CLOSE hook for menu '" + key + "' and viewer " + viewer.name() +
+                " (" + viewer.uniqueId() + ") with close reason " + reason + ".",
+            ex);
       }
     });
   }
