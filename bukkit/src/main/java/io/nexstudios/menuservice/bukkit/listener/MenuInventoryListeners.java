@@ -15,13 +15,10 @@ import io.nexstudios.menuservice.common.api.deposit.DepositPolicy;
 import io.nexstudios.menuservice.common.api.interaction.ClickAction;
 import io.nexstudios.menuservice.common.api.interaction.DragAction;
 import io.nexstudios.menuservice.common.api.interaction.InventoryArea;
-import io.nexstudios.menuservice.common.api.interaction.InteractionContext;
 import io.nexstudios.menuservice.common.api.item.MenuItem;
 import net.kyori.adventure.key.Key;
 import net.kyori.adventure.sound.Sound;
 import org.bukkit.Material;
-import org.bukkit.entity.HumanEntity;
-import org.bukkit.event.Cancellable;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -37,8 +34,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 public final class MenuInventoryListeners implements Listener {
 
@@ -53,11 +48,23 @@ public final class MenuInventoryListeners implements Listener {
 
   @EventHandler
   public void onClick(InventoryClickEvent event) {
-    ResolvedMenuContext resolved = resolveActiveMenuContext(event.getView(), event, event.getWhoClicked());
-    if (resolved == null) return;
+    Inventory top = event.getView().getTopInventory();
+    if (!(top.getHolder() instanceof PaperMenuHolder holder)) return;
 
-    Inventory top = resolved.top();
-    BukkitMenuView view = resolved.view();
+    BukkitMenuView view = service.findOpenView(holder.viewerId());
+    if (view == null || view.isClosed()) {
+      event.setCancelled(true);
+      return;
+    }
+
+    // Smart throttling: ignore spam clicks (but keep event cancelled inside menus)
+    if (!service.allowGuiInteraction(holder.viewerId())) {
+      event.getWhoClicked().playSound(
+          Sound.sound(Key.key("entity.villager.no"), Sound.Source.UI, 1f, 1f),
+          Sound.Emitter.self());
+      event.setCancelled(true);
+      return;
+    }
 
     ViewerRef viewer = BukkitInteractionMapper.viewerOf(event);
     var interaction = interactionMapper.fromClickEvent(event, top, viewer);
@@ -90,25 +97,26 @@ public final class MenuInventoryListeners implements Listener {
         // 1) stack into similar existing deposits
         for (int slot : depositPolicy.allowedTopSlots()) {
           if (remaining <= 0) break;
-          if (inBounds(top, slot)) {
-            ItemStack target = top.getItem(slot);
-            if (!isEmpty(target) && canStack(target, source)) {
-              int moved = tryDepositIntoSlot(view, depositHandler, depositPolicy, top, viewer, slot, source, remaining, interaction);
-              remaining -= moved;
-            }
-          }
+          if (!inBounds(top, slot)) continue;
+
+          ItemStack target = top.getItem(slot);
+          if (isEmpty(target)) continue;
+          if (!canStack(target, source)) continue;
+
+          int moved = tryDepositIntoSlot(view, depositHandler, depositPolicy, top, viewer, slot, source, remaining, interaction);
+          remaining -= moved;
         }
 
         // 2) fill empty slots
         for (int slot : depositPolicy.allowedTopSlots()) {
           if (remaining <= 0) break;
-          if (inBounds(top, slot)) {
-            ItemStack target = top.getItem(slot);
-            if (isEmpty(target)) {
-              int moved = tryDepositIntoSlot(view, depositHandler, depositPolicy, top, viewer, slot, source, remaining, interaction);
-              remaining -= moved;
-            }
-          }
+          if (!inBounds(top, slot)) continue;
+
+          ItemStack target = top.getItem(slot);
+          if (!isEmpty(target)) continue;
+
+          int moved = tryDepositIntoSlot(view, depositHandler, depositPolicy, top, viewer, slot, source, remaining, interaction);
+          remaining -= moved;
         }
 
         // Update source stack amount (partial)
@@ -132,7 +140,9 @@ public final class MenuInventoryListeners implements Listener {
 
       if (policy.notifyBottomInventoryClicks()) {
         var hooksOpt = view.definition().interactionHooks();
-        hooksOpt.ifPresent(hooks -> interaction.clickedItem().ifPresent(clicked -> hooks.onBottomInventoryClick(viewer, clicked, interaction.clickAction())));
+        hooksOpt.ifPresent(hooks -> interaction.clickedItem().ifPresent(clicked -> {
+          hooks.onBottomInventoryClick(viewer, clicked, interaction.clickAction());
+        }));
       }
 
       return;
@@ -182,7 +192,8 @@ public final class MenuInventoryListeners implements Listener {
 
           // Remove: slot -> cursor (allow stacking into cursor)
           if (!currentEmpty) {
-            if (tryRemoveFromSlotToCursor(view, depositHandler, depositPolicy, viewer, slot, current, interaction, event)) return;
+            boolean removed = tryRemoveFromSlotToCursor(view, depositHandler, depositPolicy, viewer, slot, current, interaction, event);
+            if (removed) return;
           }
 
           return;
@@ -222,18 +233,35 @@ public final class MenuInventoryListeners implements Listener {
           }
 
           if (!hotbarEmpty) {
-            if (trySwapSlotWithTargetStack(
-                view,
-                depositHandler,
-                viewer,
-                slot,
-                current,
-                interaction,
-                hotbarItem,
-                merged -> event.getWhoClicked().getInventory().setItem(btn, merged)
-            )) {
-              return;
-            }
+            // Swap non-empty <-> non-empty only if hotbar can take full slot stack (merge fully)
+            if (!canFullyMergeInto(hotbarItem, current)) return;
+
+            Optional<MenuItem> currentOpt = snapshotAdapter.toMenuItemSnapshot(current);
+            Optional<MenuItem> offeredOpt = snapshotAdapter.toMenuItemSnapshot(hotbarItem);
+            if (currentOpt.isEmpty() || offeredOpt.isEmpty()) return;
+
+            MenuItem currentItem = currentOpt.get();
+            MenuItem offered = offeredOpt.get();
+
+            var removeDecision = depositHandler.onRemove(view.key(), viewer, slot, currentItem, interaction);
+            if (!removeDecision.allowed()) return;
+
+            var placeDecision = depositHandler.onPlace(view.key(), viewer, slot, offered, interaction);
+            if (!placeDecision.allowed()) return;
+
+            // Merge current into hotbar (full)
+            ItemStack merged = hotbarItem.clone();
+            merged.setAmount(hotbarItem.getAmount() + current.getAmount());
+            event.getWhoClicked().getInventory().setItem(btn, merged);
+
+            // Put hotbar stack into slot (full) - we treat it as the offered stack
+            MenuItem resulting = placeDecision.resultingItem().orElse(offered);
+            view.patchSlotNow(slot, resulting);
+            view.depositLedger().ifPresent(ledger -> {
+              ledger.clearDeposit(slot);
+              ledger.recordDeposit(slot, resulting);
+            });
+
             return;
           }
 
@@ -272,18 +300,35 @@ public final class MenuInventoryListeners implements Listener {
           }
 
           if (!offhandEmpty) {
-            if (trySwapSlotWithTargetStack(
-                view,
-                depositHandler,
-                viewer,
-                slot,
-                current,
-                interaction,
-                offhand,
-                merged -> event.getWhoClicked().getInventory().setItemInOffHand(merged)
-            )) {
-              return;
-            }
+            // Swap non-empty <-> non-empty only if offhand can take full slot stack (merge fully)
+            if (!canFullyMergeInto(offhand, current)) return;
+
+            Optional<MenuItem> currentOpt = snapshotAdapter.toMenuItemSnapshot(current);
+            Optional<MenuItem> offeredOpt = snapshotAdapter.toMenuItemSnapshot(offhand);
+            if (currentOpt.isEmpty() || offeredOpt.isEmpty()) return;
+
+            MenuItem currentItem = currentOpt.get();
+            MenuItem offered = offeredOpt.get();
+
+            var removeDecision = depositHandler.onRemove(view.key(), viewer, slot, currentItem, interaction);
+            if (!removeDecision.allowed()) return;
+
+            var placeDecision = depositHandler.onPlace(view.key(), viewer, slot, offered, interaction);
+            if (!placeDecision.allowed()) return;
+
+            // Merge current into offhand
+            ItemStack merged = offhand.clone();
+            merged.setAmount(offhand.getAmount() + current.getAmount());
+            event.getWhoClicked().getInventory().setItemInOffHand(merged);
+
+            // Put the offhand stack into the slot
+            MenuItem resulting = placeDecision.resultingItem().orElse(offered);
+            view.patchSlotNow(slot, resulting);
+            view.depositLedger().ifPresent(ledger -> {
+              ledger.clearDeposit(slot);
+              ledger.recordDeposit(slot, resulting);
+            });
+
             return;
           }
 
@@ -301,11 +346,23 @@ public final class MenuInventoryListeners implements Listener {
 
   @EventHandler
   public void onDrag(InventoryDragEvent event) {
-    ResolvedMenuContext resolved = resolveActiveMenuContext(event.getView(), event, event.getWhoClicked());
-    if (resolved == null) return;
+    Inventory top = event.getView().getTopInventory();
+    if (!(top.getHolder() instanceof PaperMenuHolder holder)) return;
 
-    Inventory top = resolved.top();
-    BukkitMenuView view = resolved.view();
+    BukkitMenuView view = service.findOpenView(holder.viewerId());
+    if (view == null || view.isClosed()) {
+      event.setCancelled(true);
+      return;
+    }
+
+    // Smart throttling for drag as well (prevents spam-drag floods)
+    if (!service.allowGuiInteraction(holder.viewerId())) {
+      event.getWhoClicked().playSound(
+          Sound.sound(Key.key("entity.villager.no"), Sound.Source.UI, 1f, 1f),
+          Sound.Emitter.self());
+      event.setCancelled(true);
+      return;
+    }
 
     int topSize = top.getSize();
     boolean affectsTop = event.getRawSlots().stream().anyMatch(rawSlot -> rawSlot >= 0 && rawSlot < topSize);
@@ -356,7 +413,7 @@ public final class MenuInventoryListeners implements Listener {
     Map<Integer, ItemStack> newItems = event.getNewItems();
     if (newItems.isEmpty()) return false;
 
-    DragAction dragAction = (targetSlots.size() == 1) ? DragAction.SINGLE_SLOT : DragAction.MULTI_SLOT;
+    DragAction dragAction = (targetSlots.size() <= 1) ? DragAction.SINGLE_SLOT : DragAction.MULTI_SLOT;
 
     var interaction = SimpleInteractionContext.drag(
         viewer,
@@ -455,7 +512,10 @@ public final class MenuInventoryListeners implements Listener {
       int maxToMove,
       io.nexstudios.menuservice.common.api.interaction.InteractionContext interaction
   ) {
-    if (!inBounds(top, slot) || !depositPolicy.isSlotAllowed(slot) || isEmpty(sourceStack) || maxToMove <= 0) return 0;
+    if (!depositPolicy.isSlotAllowed(slot)) return 0;
+    if (!inBounds(top, slot)) return 0;
+    if (isEmpty(sourceStack)) return 0;
+    if (maxToMove <= 0) return 0;
 
     // Determine capacity in target (stackable)
     ItemStack current = top.getItem(slot);
@@ -481,14 +541,11 @@ public final class MenuInventoryListeners implements Listener {
     if (isEmpty(current)) {
       view.patchSlotNow(slot, resulting);
     } else {
-      if (canStack(current, resultingStack)) {
-        ItemStack merged = current.clone();
-        merged.setAmount(Math.min(merged.getMaxStackSize(), merged.getAmount() + resultingStack.getAmount()));
-        top.setItem(slot, merged);
-        view.patchSlotNow(slot, snapshotAdapter.toMenuItemSnapshot(merged).orElse(resulting));
-      } else {
-        return 0;
-      }
+      if (!canStack(current, resultingStack)) return 0;
+      ItemStack merged = current.clone();
+      merged.setAmount(Math.min(merged.getMaxStackSize(), merged.getAmount() + resultingStack.getAmount()));
+      top.setItem(slot, merged);
+      view.patchSlotNow(slot, snapshotAdapter.toMenuItemSnapshot(merged).orElse(resulting));
     }
 
     view.depositLedger().ifPresent(ledger -> ledger.recordDeposit(slot, resulting));
@@ -502,86 +559,11 @@ public final class MenuInventoryListeners implements Listener {
       ViewerRef viewer,
       int slot,
       ItemStack current,
-      InteractionContext interaction,
+      io.nexstudios.menuservice.common.api.interaction.InteractionContext interaction,
       InventoryClickEvent event
   ) {
-    return tryRemoveFromSlotToTargetStack(
-        view,
-        depositHandler,
-        depositPolicy,
-        viewer,
-        slot,
-        current,
-        interaction,
-        event::getCursor,
-        stack -> setViewCursor(event.getView(), stack)
-    );
-  }
-
-  private void tryRemoveFromSlotToHotbar(
-      BukkitMenuView view,
-      DepositHandler depositHandler,
-      DepositPolicy depositPolicy,
-      ViewerRef viewer,
-      int slot,
-      ItemStack current,
-      InteractionContext interaction,
-      int hotbarIndex,
-      InventoryClickEvent event
-  ) {
-    tryRemoveFromSlotToTargetStack(
-        view,
-        depositHandler,
-        depositPolicy,
-        viewer,
-        slot,
-        current,
-        interaction,
-        () -> event.getWhoClicked().getInventory().getItem(hotbarIndex),
-        stack -> event.getWhoClicked().getInventory().setItem(hotbarIndex, stack)
-    );
-  }
-
-  private static void setViewCursor(InventoryView view, ItemStack stack) {
-    Objects.requireNonNull(view, "view must not be null");
-    view.setCursor(stack);
-  }
-
-  private void tryRemoveFromSlotToOffhand(
-      BukkitMenuView view,
-      DepositHandler depositHandler,
-      DepositPolicy depositPolicy,
-      ViewerRef viewer,
-      int slot,
-      ItemStack current,
-      InteractionContext interaction,
-      InventoryClickEvent event
-  ) {
-    tryRemoveFromSlotToTargetStack(
-        view,
-        depositHandler,
-        depositPolicy,
-        viewer,
-        slot,
-        current,
-        interaction,
-        () -> event.getWhoClicked().getInventory().getItemInOffHand(),
-        stack -> event.getWhoClicked().getInventory().setItemInOffHand(stack)
-    );
-  }
-
-  private boolean tryRemoveFromSlotToTargetStack(
-      BukkitMenuView view,
-      DepositHandler depositHandler,
-      DepositPolicy depositPolicy,
-      ViewerRef viewer,
-      int slot,
-      ItemStack current,
-      InteractionContext interaction,
-      Supplier<ItemStack> targetGetter,
-      Consumer<ItemStack> targetSetter
-  ) {
-    if (!depositPolicy.isSlotAllowed(slot) || isEmpty(current)) return false;
+    if (!depositPolicy.isSlotAllowed(slot)) return false;
+    if (isEmpty(current)) return false;
 
     Optional<MenuItem> currentOpt = snapshotAdapter.toMenuItemSnapshot(current);
     if (currentOpt.isEmpty()) return false;
@@ -589,17 +571,17 @@ public final class MenuInventoryListeners implements Listener {
     var decision = depositHandler.onRemove(view.key(), viewer, slot, currentOpt.get(), interaction);
     if (!decision.allowed()) return false;
 
-    ItemStack target = targetGetter.get();
-    if (isEmpty(target)) {
-      targetSetter.accept(current.clone());
+    ItemStack cursor = event.getCursor();
+    if (!isEmpty(cursor) && !canFullyMergeInto(cursor, current)) return false;
+
+    // merge into cursor or set
+    if (isEmpty(cursor)) {
+      setViewCursor(event.getView(), current.clone());
+
     } else {
-      if (canFullyMergeInto(target, current)) {
-        ItemStack merged = target.clone();
-        merged.setAmount(target.getAmount() + current.getAmount());
-        targetSetter.accept(merged);
-      } else {
-        return false;
-      }
+      ItemStack merged = cursor.clone();
+      merged.setAmount(cursor.getAmount() + current.getAmount());
+      setViewCursor(event.getView(), merged);
     }
 
     view.patchSlotNow(slot, null);
@@ -607,64 +589,80 @@ public final class MenuInventoryListeners implements Listener {
     return true;
   }
 
-  private boolean trySwapSlotWithTargetStack(
+  private boolean tryRemoveFromSlotToHotbar(
       BukkitMenuView view,
       DepositHandler depositHandler,
+      DepositPolicy depositPolicy,
       ViewerRef viewer,
       int slot,
       ItemStack current,
-      InteractionContext interaction,
-      ItemStack target,
-      Consumer<ItemStack> targetSetter
+      io.nexstudios.menuservice.common.api.interaction.InteractionContext interaction,
+      int hotbarIndex,
+      InventoryClickEvent event
   ) {
-    if (!canFullyMergeInto(target, current)) return false;
+    if (!depositPolicy.isSlotAllowed(slot)) return false;
+    if (isEmpty(current)) return false;
 
     Optional<MenuItem> currentOpt = snapshotAdapter.toMenuItemSnapshot(current);
-    Optional<MenuItem> offeredOpt = snapshotAdapter.toMenuItemSnapshot(target);
-    if (currentOpt.isEmpty() || offeredOpt.isEmpty()) return false;
+    if (currentOpt.isEmpty()) return false;
 
-    MenuItem currentItem = currentOpt.get();
-    MenuItem offered = offeredOpt.get();
+    var decision = depositHandler.onRemove(view.key(), viewer, slot, currentOpt.get(), interaction);
+    if (!decision.allowed()) return false;
 
-    var removeDecision = depositHandler.onRemove(view.key(), viewer, slot, currentItem, interaction);
-    if (!removeDecision.allowed()) return false;
+    ItemStack hotbar = event.getWhoClicked().getInventory().getItem(hotbarIndex);
+    if (!isEmpty(hotbar) && !canFullyMergeInto(hotbar, current)) return false;
 
-    var placeDecision = depositHandler.onPlace(view.key(), viewer, slot, offered, interaction);
-    if (!placeDecision.allowed()) return false;
+    if (isEmpty(hotbar)) {
+      event.getWhoClicked().getInventory().setItem(hotbarIndex, current.clone());
+    } else {
+      ItemStack merged = hotbar.clone();
+      merged.setAmount(hotbar.getAmount() + current.getAmount());
+      event.getWhoClicked().getInventory().setItem(hotbarIndex, merged);
+    }
 
-    ItemStack merged = target.clone();
-    merged.setAmount(target.getAmount() + current.getAmount());
-    targetSetter.accept(merged);
-
-    MenuItem resulting = placeDecision.resultingItem().orElse(offered);
-    view.patchSlotNow(slot, resulting);
-    view.depositLedger().ifPresent(ledger -> {
-      ledger.clearDeposit(slot);
-      ledger.recordDeposit(slot, resulting);
-    });
+    view.patchSlotNow(slot, null);
+    view.depositLedger().ifPresent(ledger -> ledger.clearDeposit(slot));
     return true;
   }
 
-  private ResolvedMenuContext resolveActiveMenuContext(InventoryView inventoryView, Cancellable event, HumanEntity actor) {
-    Inventory top = inventoryView.getTopInventory();
-    if (!(top.getHolder() instanceof PaperMenuHolder holder)) return null;
+  private static void setViewCursor(InventoryView view, ItemStack stack) {
+    Objects.requireNonNull(view, "view must not be null");
+    view.setCursor(stack);
+  }
 
-    BukkitMenuView view = service.findOpenView(holder.viewerId());
-    if (view == null || view.isClosed()) {
-      event.setCancelled(true);
-      return null;
+  private boolean tryRemoveFromSlotToOffhand(
+      BukkitMenuView view,
+      DepositHandler depositHandler,
+      DepositPolicy depositPolicy,
+      ViewerRef viewer,
+      int slot,
+      ItemStack current,
+      io.nexstudios.menuservice.common.api.interaction.InteractionContext interaction,
+      InventoryClickEvent event
+  ) {
+    if (!depositPolicy.isSlotAllowed(slot)) return false;
+    if (isEmpty(current)) return false;
+
+    Optional<MenuItem> currentOpt = snapshotAdapter.toMenuItemSnapshot(current);
+    if (currentOpt.isEmpty()) return false;
+
+    var decision = depositHandler.onRemove(view.key(), viewer, slot, currentOpt.get(), interaction);
+    if (!decision.allowed()) return false;
+
+    ItemStack offhand = event.getWhoClicked().getInventory().getItemInOffHand();
+    if (!isEmpty(offhand) && !canFullyMergeInto(offhand, current)) return false;
+
+    if (isEmpty(offhand)) {
+      event.getWhoClicked().getInventory().setItemInOffHand(current.clone());
+    } else {
+      ItemStack merged = offhand.clone();
+      merged.setAmount(offhand.getAmount() + current.getAmount());
+      event.getWhoClicked().getInventory().setItemInOffHand(merged);
     }
 
-    // Smart throttling: ignore spam clicks/drags (but keep event cancelled inside menus)
-    if (!service.allowGuiInteraction(holder.viewerId())) {
-      actor.playSound(
-          Sound.sound(Key.key("entity.villager.no"), Sound.Source.UI, 1f, 1f),
-          Sound.Emitter.self());
-      event.setCancelled(true);
-      return null;
-    }
-
-    return new ResolvedMenuContext(top, holder, view);
+    view.patchSlotNow(slot, null);
+    view.depositLedger().ifPresent(ledger -> ledger.clearDeposit(slot));
+    return true;
   }
 
   private static boolean inBounds(Inventory inv, int slot) {
@@ -685,8 +683,8 @@ public final class MenuInventoryListeners implements Listener {
     int max = incoming.getMaxStackSize();
     if (isEmpty(current)) return max;
 
-    if (canStack(current, incoming)) return Math.max(0, max - current.getAmount());
-    return 0;
+    if (!canStack(current, incoming)) return 0;
+    return Math.max(0, max - current.getAmount());
   }
 
   private static boolean canPlaceOrStack(ItemStack current, ItemStack incoming) {
@@ -696,11 +694,10 @@ public final class MenuInventoryListeners implements Listener {
   private static boolean canFullyMergeInto(ItemStack target, ItemStack incoming) {
     if (isEmpty(incoming)) return true;
     if (isEmpty(target)) return incoming.getAmount() <= incoming.getMaxStackSize();
-    if (canStack(target, incoming)) {
-      int max = target.getMaxStackSize();
-      return target.getAmount() + incoming.getAmount() <= max;
-    }
-    return false;
+    if (!canStack(target, incoming)) return false;
+
+    int max = target.getMaxStackSize();
+    return target.getAmount() + incoming.getAmount() <= max;
   }
 
   private record SimpleClickContext(
@@ -734,10 +731,4 @@ public final class MenuInventoryListeners implements Listener {
       // Already cancelled by default.
     }
   }
-
-  private record ResolvedMenuContext(
-      Inventory top,
-      PaperMenuHolder holder,
-      BukkitMenuView view
-  ) {}
 }
