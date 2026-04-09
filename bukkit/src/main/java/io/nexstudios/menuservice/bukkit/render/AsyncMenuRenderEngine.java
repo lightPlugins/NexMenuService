@@ -499,14 +499,16 @@ public final class AsyncMenuRenderEngine {
       int currentPageNumber = currentIndex + 1;
 
       if (!(nav.hidePreviousOnFirstPage() && currentIndex <= 0)) {
+        int previousPageNumber = Math.max(1, currentPageNumber - 1);
         nav.previousSlot().ifPresent(slot -> items.putIfAbsent(slot,
-            buildNavigationItem(nav.previousItem(), new ItemStack(Material.ARROW, 1), nav.showCurrentPageAmount(), currentPageNumber)
+            buildNavigationItem(nav.previousItem(), new ItemStack(Material.ARROW, 1), nav.showCurrentPageAmount(), previousPageNumber)
         ));
       }
 
       if (!(nav.hideNextOnLastPage() && currentIndex >= pageCount - 1)) {
+        int nextPageNumber = Math.min(pageCount, currentPageNumber + 1);
         nav.nextSlot().ifPresent(slot -> items.putIfAbsent(slot,
-            buildNavigationItem(nav.nextItem(), new ItemStack(Material.ARROW, 1), nav.showCurrentPageAmount(), currentPageNumber)
+            buildNavigationItem(nav.nextItem(), new ItemStack(Material.ARROW, 1), nav.showCurrentPageAmount(), nextPageNumber)
         ));
       }
 
@@ -546,13 +548,13 @@ public final class AsyncMenuRenderEngine {
       Optional<MenuItem> configuredItem,
       ItemStack fallback,
       boolean showCurrentPageAmount,
-      int currentPageNumber
+      int pageNumber
   ) {
     MenuItem item = configuredItem.orElse(MenuItem.of(fallback));
     if (!showCurrentPageAmount) return item;
 
     ItemStack stack = item.stack();
-    int amount = Math.max(1, Math.min(currentPageNumber, stack.getMaxStackSize()));
+    int amount = Math.max(1, Math.min(pageNumber, stack.getMaxStackSize()));
     stack.setAmount(amount);
     return MenuItem.of(stack);
   }
