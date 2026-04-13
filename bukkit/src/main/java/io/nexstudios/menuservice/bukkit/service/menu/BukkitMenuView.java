@@ -6,6 +6,7 @@ import io.nexstudios.menuservice.bukkit.render.AsyncMenuRenderEngine;
 import io.nexstudios.menuservice.common.api.ClosePhase;
 import io.nexstudios.menuservice.common.api.CloseReason;
 import io.nexstudios.menuservice.common.api.MenuDefinition;
+import io.nexstudios.menuservice.common.api.MenuLocalizationContext;
 import io.nexstudios.menuservice.common.api.MenuKey;
 import io.nexstudios.menuservice.common.api.MenuView;
 import io.nexstudios.menuservice.common.api.ViewerRef;
@@ -45,6 +46,7 @@ public final class BukkitMenuView implements MenuView {
   private final MenuDefinition definition;
   private final Inventory inventory;
   private final Instant openedAt;
+  private final MenuLocalizationContext localizationContext;
 
   private final AsyncMenuRenderEngine renderEngine;
 
@@ -96,6 +98,7 @@ public final class BukkitMenuView implements MenuView {
       MenuDefinition definition,
       Inventory inventory,
       Instant openedAt,
+      MenuLocalizationContext localizationContext,
       AsyncMenuRenderEngine renderEngine,
       PageControlStateStore pageControlStateStore
   ) {
@@ -105,6 +108,7 @@ public final class BukkitMenuView implements MenuView {
     this.definition = Objects.requireNonNull(definition, "definition must not be null");
     this.inventory = Objects.requireNonNull(inventory, "inventory must not be null");
     this.openedAt = Objects.requireNonNull(openedAt, "openedAt must not be null");
+    this.localizationContext = localizationContext;
     this.renderEngine = Objects.requireNonNull(renderEngine, "renderEngine must not be null");
     this.pageControlStateStore = Objects.requireNonNull(pageControlStateStore, "pageControlStateStore must not be null");
 
@@ -207,6 +211,10 @@ public final class BukkitMenuView implements MenuView {
 
   public MenuDefinition definition() {
     return definition;
+  }
+
+  public Optional<MenuLocalizationContext> localizationContext() {
+    return Optional.ofNullable(localizationContext);
   }
 
   public Inventory inventory() {

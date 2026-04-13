@@ -2,6 +2,7 @@ package io.nexstudios.menuservice.common.api.builder;
 
 import io.nexstudios.menuservice.common.api.InteractionPolicy;
 import io.nexstudios.menuservice.common.api.MenuDefinition;
+import io.nexstudios.menuservice.common.api.MenuLocalizationOptions;
 import io.nexstudios.menuservice.common.api.MenuInteractionHooks;
 import io.nexstudios.menuservice.common.api.MenuKey;
 import io.nexstudios.menuservice.common.api.MenuPopulator;
@@ -40,6 +41,9 @@ public final class MenuDefinitionBuilder {
 
   @Nullable
   private DepositHandler depositHandler;
+
+  @Nullable
+  private MenuLocalizationOptions localizationOptions;
 
   private final List<PagedAreaDefinition<?>> pagedAreas = new ArrayList<>();
 
@@ -139,6 +143,26 @@ public final class MenuDefinitionBuilder {
     return this;
   }
 
+  /**
+   * Enables language-aware item text resolution for this menu.
+   *
+   * Only display names and lore lines that start with the configured marker prefix are translated.
+   */
+  public MenuDefinitionBuilder languageAware() {
+    this.localizationOptions = MenuLocalizationOptions.of();
+    return this;
+  }
+
+  public MenuDefinitionBuilder languageAware(String markerPrefix) {
+    this.localizationOptions = MenuLocalizationOptions.of(markerPrefix);
+    return this;
+  }
+
+  public MenuDefinitionBuilder noLanguageAware() {
+    this.localizationOptions = null;
+    return this;
+  }
+
   public MenuDefinitionBuilder noDepositHandler() {
     this.depositHandler = null;
     return this;
@@ -190,6 +214,7 @@ public final class MenuDefinitionBuilder {
 
     final Optional<MenuInteractionHooks> builtHooks = Optional.ofNullable(interactionHooks);
     final Optional<DepositHandler> builtDepositHandler = Optional.ofNullable(depositHandler);
+    final Optional<MenuLocalizationOptions> builtLocalizationOptions = Optional.ofNullable(localizationOptions);
 
     final Optional<List<PagedAreaDefinition<?>>> builtPagedAreas =
         pagedAreas.isEmpty() ? Optional.empty() : Optional.of(List.copyOf(pagedAreas));
@@ -213,6 +238,7 @@ public final class MenuDefinitionBuilder {
       @Override public MenuPopulator populator() { return builtPopulator; }
       @Override public Optional<MenuInteractionHooks> interactionHooks() { return builtHooks; }
       @Override public Optional<DepositHandler> depositHandler() { return builtDepositHandler; }
+      @Override public Optional<MenuLocalizationOptions> localizationOptions() { return builtLocalizationOptions; }
       @Override
       public Optional<List<PagedAreaDefinition<?>>> pagedAreas() { return builtPagedAreas; }
 

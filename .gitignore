@@ -10,6 +10,7 @@ build/
 .idea/jarRepositories.xml
 .idea/compiler.xml
 .idea/libraries/
+.idea/copilot.data.migration.ask2agent.xml
 *.iws
 *.iml
 *.ipr

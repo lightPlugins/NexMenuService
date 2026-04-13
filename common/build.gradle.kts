@@ -11,6 +11,7 @@ dependencies {
     api("com.github.lightplugins:NexServiceRegistry:${providers.gradleProperty("registryVersion").get()}")
     //api("io.nexstudios.itemservice:bukkit:${providers.gradleProperty("itemVersion").get()}")
     api("io.nexstudios.itemservice:bukkit:v1.0.0")
+    api("io.nexstudios.languageservice:bukkit:v1.0.0")
     compileOnly("org.jetbrains:annotations:26.0.1")
     compileOnly("net.kyori:adventure-text-serializer-ansi:4.26.1")
 

@@ -4,6 +4,8 @@ import io.nexstudios.menuservice.bukkit.service.menu.BukkitMenuView;
 import io.nexstudios.menuservice.bukkit.service.menu.ClickHandlerStore;
 import io.nexstudios.menuservice.common.api.MenuDefinition;
 import io.nexstudios.menuservice.common.api.MenuDefaults;
+import io.nexstudios.menuservice.common.api.MenuLocalizationContext;
+import io.nexstudios.menuservice.common.api.MenuLocalizationOptions;
 import io.nexstudios.menuservice.common.api.MenuSlot;
 import io.nexstudios.menuservice.common.api.deposit.DepositLedger;
 import io.nexstudios.menuservice.common.api.deposit.DepositPolicy;
@@ -24,8 +26,10 @@ import io.nexstudios.menuservice.common.api.render.RenderPatch;
 import io.nexstudios.menuservice.common.api.render.RenderPlan;
 import io.nexstudios.menuservice.common.api.render.RenderReason;
 import io.nexstudios.menuservice.common.api.render.RenderResult;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
-import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.Material;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -128,7 +132,6 @@ public final class AsyncMenuRenderEngine {
               apply(view, bundle);
             } catch (RuntimeException ex) {
               log(Level.SEVERE, "Failed to apply rendered content for " + menuContext(view) + " during render reason " + reason + ".", ex);
-              ex.printStackTrace();
             }
           } finally {
             gate.rendering.set(false);
@@ -154,7 +157,6 @@ public final class AsyncMenuRenderEngine {
           clearStickyForPagedArea(view, areaId);
         } catch (RuntimeException ex) {
           log(Level.SEVERE, "Failed to clear sticky slots for " + menuContext(view) + " and page area '" + areaId + "'.", ex);
-          ex.printStackTrace();
         }
       });
     }
@@ -163,7 +165,6 @@ public final class AsyncMenuRenderEngine {
       def.populator().populate(ctx);
     } catch (RuntimeException ex) {
       log(Level.SEVERE, "Failed to populate " + menuContext(view) + " during render reason " + reason + ".", ex);
-      ex.printStackTrace();
     }
 
     PagingBundle paging = PagingBundle.empty();
@@ -171,7 +172,6 @@ public final class AsyncMenuRenderEngine {
       paging = renderPaging(view, pageTarget);
     } catch (RuntimeException ex) {
       log(Level.SEVERE, "Failed to render paging content for " + menuContext(view) + " during render reason " + reason + ".", ex);
-      ex.printStackTrace();
     }
 
     ButtonBundle buttons = ButtonBundle.empty();
@@ -179,7 +179,6 @@ public final class AsyncMenuRenderEngine {
       buttons = renderControlButtons(view);
     } catch (RuntimeException ex) {
       log(Level.SEVERE, "Failed to render paging control buttons for " + menuContext(view) + " during render reason " + reason + ".", ex);
-      ex.printStackTrace();
     }
 
     RenderPlan base = ctx.toRenderPlan();
@@ -219,11 +218,13 @@ public final class AsyncMenuRenderEngine {
 
     // Materialize planned items on the main thread
     MaterializedRender materialized = materialize(view, bundle.plan());
+    materialized = localize(view, materialized);
     RenderResult result = materialized.result();
 
     // Main-thread only: inject defaults + apply decorations (touch Bukkit internals)
     result = injectDefaultPagingNavItemsIfEmpty(view, result);
     result = applyEmptySlotFiller(view.definition(), inv.getSize(), result);
+    result = localize(view, result);
 
     RenderResult filtered = filterOutActiveDepositSlots(view, result);
     filtered = filterOutStickyOverrides(view, filtered);
@@ -241,7 +242,14 @@ public final class AsyncMenuRenderEngine {
     injectPagingNavigationHandlers(view, handlers);
     ClickHandlerStore.attach(inv, handlers);
 
-    List<PlannedHeadUpdate> plannedHeads = new ArrayList<>(bundle.plannedHeads());
+    List<PlannedHeadUpdate> plannedHeads = new ArrayList<>();
+    Optional<MenuLocalizationOptions> optionsOpt = view.definition().localizationOptions();
+    Optional<MenuLocalizationContext> contextOpt = view.localizationContext();
+    if (optionsOpt.isPresent() && contextOpt.isPresent() && optionsOpt.get().enabled()) {
+      plannedHeads.addAll(localizePlannedHeads(bundle.plannedHeads(), optionsOpt.get(), contextOpt.get()));
+    } else {
+      plannedHeads.addAll(bundle.plannedHeads());
+    }
     plannedHeads.addAll(materialized.plannedHeads());
     registerPlannedHeads(view, plannedHeads, bundle.renderToken());
   }
@@ -286,6 +294,159 @@ public final class AsyncMenuRenderEngine {
     }
 
     return MenuItem.of(merged);
+  }
+
+  private static MaterializedRender localize(BukkitMenuView view, MaterializedRender render) {
+    Objects.requireNonNull(view, "view must not be null");
+    Objects.requireNonNull(render, "render must not be null");
+
+    Optional<MenuLocalizationOptions> optionsOpt = view.definition().localizationOptions();
+    Optional<MenuLocalizationContext> contextOpt = view.localizationContext();
+    if (optionsOpt.isEmpty() || contextOpt.isEmpty() || !optionsOpt.get().enabled()) {
+      return render;
+    }
+
+    MenuLocalizationOptions options = optionsOpt.get();
+    MenuLocalizationContext context = contextOpt.get();
+
+    RenderResult result = localizeResult(render.result(), options, context);
+    List<PlannedHeadUpdate> plannedHeads = localizePlannedHeads(render.plannedHeads(), options, context);
+
+    return new MaterializedRender(result, plannedHeads);
+  }
+
+  private static RenderResult localize(BukkitMenuView view, RenderResult result) {
+    Objects.requireNonNull(view, "view must not be null");
+    Objects.requireNonNull(result, "result must not be null");
+
+    Optional<MenuLocalizationOptions> optionsOpt = view.definition().localizationOptions();
+    Optional<MenuLocalizationContext> contextOpt = view.localizationContext();
+    if (optionsOpt.isEmpty() || contextOpt.isEmpty() || !optionsOpt.get().enabled()) {
+      return result;
+    }
+
+    return localizeResult(result, optionsOpt.get(), contextOpt.get());
+  }
+
+  private static List<PlannedHeadUpdate> localizePlannedHeads(
+      List<PlannedHeadUpdate> plannedHeads,
+      MenuLocalizationOptions options,
+      MenuLocalizationContext context
+  ) {
+    if (plannedHeads == null || plannedHeads.isEmpty()) return List.of();
+
+    List<PlannedHeadUpdate> localized = new ArrayList<>(plannedHeads.size());
+    for (PlannedHeadUpdate update : plannedHeads) {
+      localized.add(new PlannedHeadUpdate(update.slot(), localizeItem(update.placeholder(), options, context), update.future()));
+    }
+    return List.copyOf(localized);
+  }
+
+  private static RenderResult localizeResult(RenderResult input, MenuLocalizationOptions options, MenuLocalizationContext context) {
+    Map<Integer, MenuItem> items = new HashMap<>();
+    for (var e : input.slotsToItems().entrySet()) {
+      items.put(e.getKey(), localizeItem(e.getValue(), options, context));
+    }
+    return new RenderResult(Map.copyOf(items), Set.copyOf(input.clearedSlots()));
+  }
+
+  private static MenuItem localizeItem(MenuItem item, MenuLocalizationOptions options, MenuLocalizationContext context) {
+    Objects.requireNonNull(item, "item must not be null");
+    Objects.requireNonNull(options, "options must not be null");
+    Objects.requireNonNull(context, "context must not be null");
+
+    ItemStack stack = item.stack();
+    ItemMeta meta = stack.getItemMeta();
+    if (meta == null) {
+      return item;
+    }
+
+    boolean changed = false;
+
+    if (meta.hasDisplayName()) {
+      Component translated = translateMarkedComponent(meta.displayName(), options, context);
+      if (translated != null) {
+        meta.displayName(translated);
+        changed = true;
+      }
+    }
+
+    if (meta.hasLore()) {
+      List<Component> lore = meta.lore();
+      if (lore != null && !lore.isEmpty()) {
+        List<Component> translatedLore = new ArrayList<>(lore.size());
+        boolean loreChanged = false;
+        for (Component line : lore) {
+          List<Component> translatedLines = translateMarkedLoreLine(line, options, context);
+          if (translatedLines != null) {
+            translatedLore.addAll(translatedLines);
+            loreChanged = true;
+          } else {
+            translatedLore.add(line);
+          }
+        }
+        if (loreChanged) {
+          meta.lore(translatedLore);
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed) {
+      return item;
+    }
+
+    stack.setItemMeta(meta);
+    return MenuItem.of(stack);
+  }
+
+  private static Component translateMarkedComponent(Component source, MenuLocalizationOptions options, MenuLocalizationContext context) {
+    if (source == null) return null;
+
+    String plain = PlainTextComponentSerializer.plainText().serialize(source);
+    String prefix = options.markerPrefix();
+    if (!plain.startsWith(prefix)) {
+      return null;
+    }
+
+    String key = plain.substring(prefix.length()).trim();
+    if (key.isEmpty()) {
+      return null;
+    }
+
+    Component resolved = context.resolver().resolve(key, context.tagResolver());
+    if (resolved == null) {
+      return null;
+    }
+
+    return resolved.decoration(TextDecoration.ITALIC, false);
+  }
+
+  private static List<Component> translateMarkedLoreLine(Component source, MenuLocalizationOptions options, MenuLocalizationContext context) {
+    if (source == null) return null;
+
+    String plain = PlainTextComponentSerializer.plainText().serialize(source);
+    String prefix = options.markerPrefix();
+    if (!plain.startsWith(prefix)) {
+      return null;
+    }
+
+    String key = plain.substring(prefix.length()).trim();
+    if (key.isEmpty()) {
+      return null;
+    }
+
+    List<Component> resolved = context.resolver().resolveLines(key, context.tagResolver());
+    if (resolved == null || resolved.isEmpty()) {
+      return null;
+    }
+
+    List<Component> translated = new ArrayList<>(resolved.size());
+    for (Component component : resolved) {
+      if (component == null) continue;
+      translated.add(component.decoration(TextDecoration.ITALIC, false));
+    }
+    return translated.isEmpty() ? null : translated;
   }
 
   private void applyPatchToInventoryFast(Inventory inv, RenderPatch patch) {

@@ -2,6 +2,7 @@ package io.nexstudios.menuservice.common.api.builder;
 
 import io.nexstudios.menuservice.common.api.InteractionPolicy;
 import io.nexstudios.menuservice.common.api.MenuKey;
+import io.nexstudios.menuservice.common.api.MenuLocalizationOptions;
 import io.nexstudios.menuservice.common.api.MenuPopulator;
 import io.nexstudios.menuservice.common.api.interaction.InteractionPolicies;
 import org.junit.jupiter.api.Test;
@@ -72,5 +73,28 @@ class MenuDefinitionBuilderTest {
     assertThrows(IllegalArgumentException.class, () ->
         MenuDefinitionBuilder.create().rows(7)
     );
+  }
+
+  @Test
+  void languageAwareFlagShouldBeOptional() {
+    var base = MenuDefinitionBuilder.create()
+        .key(MenuKey.of("nex", "m1"))
+        .title("Title")
+        .interactionPolicy(InteractionPolicies.locked())
+        .populator(ctx -> {})
+        .build();
+
+    assertTrue(base.localizationOptions().isEmpty());
+
+    var localized = MenuDefinitionBuilder.create()
+        .key(MenuKey.of("nex", "m2"))
+        .title("Title")
+        .interactionPolicy(InteractionPolicies.locked())
+        .populator(ctx -> {})
+        .languageAware()
+        .build();
+
+    assertTrue(localized.localizationOptions().isPresent());
+    assertEquals(MenuLocalizationOptions.DEFAULT_MARKER_PREFIX, localized.localizationOptions().get().markerPrefix());
   }
 }

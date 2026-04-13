@@ -6,6 +6,7 @@ import io.nexstudios.menuservice.bukkit.listener.MenuInventoryListeners;
 import io.nexstudios.menuservice.bukkit.listener.MenuLifecycleListeners;
 import io.nexstudios.menuservice.bukkit.render.AsyncMenuRenderEngine;
 import io.nexstudios.menuservice.common.api.*;
+import io.nexstudios.menuservice.common.api.MenuLocalizationContext;
 import io.nexstudios.menuservice.common.api.registry.MenuNotRegisteredException;
 import io.nexstudios.menuservice.common.api.render.RenderReason;
 import net.kyori.adventure.text.Component;
@@ -149,6 +150,11 @@ public final class BukkitMenuService implements MenuService {
 
   @Override
   public void open(ViewerRef viewer, MenuKey key) {
+    open(viewer, key, null);
+  }
+
+  @Override
+  public void open(ViewerRef viewer, MenuKey key, MenuLocalizationContext localizationContext) {
     Objects.requireNonNull(viewer, "viewer must not be null");
     Objects.requireNonNull(key, "key must not be null");
 
@@ -174,6 +180,7 @@ public final class BukkitMenuService implements MenuService {
           def,
           inv,
           Instant.now(),
+          localizationContext,
           renderEngine,
           pageControlStateStore
       );

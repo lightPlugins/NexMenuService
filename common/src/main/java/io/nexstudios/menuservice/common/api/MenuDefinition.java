@@ -5,6 +5,7 @@ import io.nexstudios.menuservice.common.api.item.MenuItem;
 import io.nexstudios.menuservice.common.api.page.PagedAreaDefinition;
 import io.nexstudios.menuservice.common.api.page.control.PageControlBinding;
 import io.nexstudios.menuservice.common.api.page.control.PageControlButton;
+import io.nexstudios.menuservice.common.api.MenuLocalizationOptions;
 
 import java.time.Duration;
 import java.util.List;
@@ -33,6 +34,13 @@ public interface MenuDefinition {
   Optional<MenuInteractionHooks> interactionHooks();
 
   Optional<DepositHandler> depositHandler();
+
+  /**
+   * Optional localization settings for display names/lore that are marked with a language key.
+   */
+  default Optional<MenuLocalizationOptions> localizationOptions() {
+    return Optional.empty();
+  }
 
   /**
    * Optional list of paged areas declared for this menu.
