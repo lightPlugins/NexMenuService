@@ -82,6 +82,33 @@ Optional lifecycle hooks are also supported, such as:
 
 ---
 
+## Multi-language menu text
+
+Menu definitions can mark raw text values with `language:` to resolve them from your language files during item/menu prebuild.
+
+```yml
+display-name: "language:test"
+lore:
+  - "language:more-test"
+```
+
+### Behavior
+
+- `language:` is the default marker prefix
+- `lang:` is still accepted as a legacy alias
+- only marked values are translated; unmarked text stays unchanged
+- lore markers may expand to multiple lines when the language key returns a list
+
+### Resolver helper
+
+If your plugin already has a language/path service, you can build a raw-string resolver with:
+
+- `MenuLocalizationSupport.stringResolver(StringPathService, languageId)`
+
+That makes it easy to resolve `display-name` and `lore` entries during an async prebuild, before turning them into `Component`s.
+
+---
+
 ## Optional Modules
 
 ### Paging 📄

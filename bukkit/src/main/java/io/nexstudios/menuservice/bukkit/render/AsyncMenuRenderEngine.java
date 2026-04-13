@@ -6,6 +6,7 @@ import io.nexstudios.menuservice.common.api.MenuDefinition;
 import io.nexstudios.menuservice.common.api.MenuDefaults;
 import io.nexstudios.menuservice.common.api.MenuLocalizationContext;
 import io.nexstudios.menuservice.common.api.MenuLocalizationOptions;
+import io.nexstudios.menuservice.common.api.MenuLocalizationSupport;
 import io.nexstudios.menuservice.common.api.MenuSlot;
 import io.nexstudios.menuservice.common.api.deposit.DepositLedger;
 import io.nexstudios.menuservice.common.api.deposit.DepositPolicy;
@@ -27,8 +28,6 @@ import io.nexstudios.menuservice.common.api.render.RenderPlan;
 import io.nexstudios.menuservice.common.api.render.RenderReason;
 import io.nexstudios.menuservice.common.api.render.RenderResult;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
-import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.Material;
@@ -355,99 +354,10 @@ public final class AsyncMenuRenderEngine {
     Objects.requireNonNull(options, "options must not be null");
     Objects.requireNonNull(context, "context must not be null");
 
-    ItemStack stack = item.stack();
-    ItemMeta meta = stack.getItemMeta();
-    if (meta == null) {
-      return item;
-    }
-
-    boolean changed = false;
-
-    if (meta.hasDisplayName()) {
-      Component translated = translateMarkedComponent(meta.displayName(), options, context);
-      if (translated != null) {
-        meta.displayName(translated);
-        changed = true;
-      }
-    }
-
-    if (meta.hasLore()) {
-      List<Component> lore = meta.lore();
-      if (lore != null && !lore.isEmpty()) {
-        List<Component> translatedLore = new ArrayList<>(lore.size());
-        boolean loreChanged = false;
-        for (Component line : lore) {
-          List<Component> translatedLines = translateMarkedLoreLine(line, options, context);
-          if (translatedLines != null) {
-            translatedLore.addAll(translatedLines);
-            loreChanged = true;
-          } else {
-            translatedLore.add(line);
-          }
-        }
-        if (loreChanged) {
-          meta.lore(translatedLore);
-          changed = true;
-        }
-      }
-    }
-
-    if (!changed) {
-      return item;
-    }
-
-    stack.setItemMeta(meta);
+    ItemStack stack = MenuLocalizationSupport.localizeItem(item.stack(), options, context.resolver(), context.tagResolver());
     return MenuItem.of(stack);
   }
 
-  private static Component translateMarkedComponent(Component source, MenuLocalizationOptions options, MenuLocalizationContext context) {
-    if (source == null) return null;
-
-    String plain = PlainTextComponentSerializer.plainText().serialize(source);
-    String prefix = options.markerPrefix();
-    if (!plain.startsWith(prefix)) {
-      return null;
-    }
-
-    String key = plain.substring(prefix.length()).trim();
-    if (key.isEmpty()) {
-      return null;
-    }
-
-    Component resolved = context.resolver().resolve(key, context.tagResolver());
-    if (resolved == null) {
-      return null;
-    }
-
-    return resolved.decoration(TextDecoration.ITALIC, false);
-  }
-
-  private static List<Component> translateMarkedLoreLine(Component source, MenuLocalizationOptions options, MenuLocalizationContext context) {
-    if (source == null) return null;
-
-    String plain = PlainTextComponentSerializer.plainText().serialize(source);
-    String prefix = options.markerPrefix();
-    if (!plain.startsWith(prefix)) {
-      return null;
-    }
-
-    String key = plain.substring(prefix.length()).trim();
-    if (key.isEmpty()) {
-      return null;
-    }
-
-    List<Component> resolved = context.resolver().resolveLines(key, context.tagResolver());
-    if (resolved == null || resolved.isEmpty()) {
-      return null;
-    }
-
-    List<Component> translated = new ArrayList<>(resolved.size());
-    for (Component component : resolved) {
-      if (component == null) continue;
-      translated.add(component.decoration(TextDecoration.ITALIC, false));
-    }
-    return translated.isEmpty() ? null : translated;
-  }
 
   private void applyPatchToInventoryFast(Inventory inv, RenderPatch patch) {
     int size = inv.getSize();

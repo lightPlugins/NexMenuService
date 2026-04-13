@@ -25,7 +25,7 @@ public final class MenuServiceModule implements ServiceModule {
     Objects.requireNonNull(services, "services must not be null");
 
     BukkitMenuRegistry registry = new BukkitMenuRegistry();
-    BukkitMenuService menuService = new BukkitMenuService(plugin, registry);
+    BukkitMenuService menuService = new BukkitMenuService(plugin, registry, services);
 
     services.register(MenuService.class, menuService);
 

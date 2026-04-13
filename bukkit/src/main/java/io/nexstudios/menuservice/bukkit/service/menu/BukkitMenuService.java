@@ -9,6 +9,7 @@ import io.nexstudios.menuservice.common.api.*;
 import io.nexstudios.menuservice.common.api.MenuLocalizationContext;
 import io.nexstudios.menuservice.common.api.registry.MenuNotRegisteredException;
 import io.nexstudios.menuservice.common.api.render.RenderReason;
+import io.nexstudios.serviceregistry.di.ServiceAccessor;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -36,6 +37,7 @@ public final class BukkitMenuService implements MenuService {
 
   private final Plugin plugin;
   private final MenuRegistry registry;
+  private final ServiceAccessor services;
 
   private final InMemoryPageControlStateStore pageControlStateStore = new InMemoryPageControlStateStore();
   // Smart GUI throttling: allow up to 5 actions/sec; if exceeded => 750ms cooldown
@@ -53,9 +55,10 @@ public final class BukkitMenuService implements MenuService {
 
   private BukkitTask refreshTask;
 
-  public BukkitMenuService(Plugin plugin, MenuRegistry registry) {
+  public BukkitMenuService(Plugin plugin, MenuRegistry registry, ServiceAccessor services) {
     this.plugin = Objects.requireNonNull(plugin, "plugin must not be null");
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
+    this.services = Objects.requireNonNull(services, "services must not be null");
 
     this.renderEngine = new AsyncMenuRenderEngine(plugin);
 
@@ -166,6 +169,8 @@ public final class BukkitMenuService implements MenuService {
         throw new IllegalStateException("Viewer is not online: " + viewer.uniqueId());
       }
 
+      MenuLocalizationContext effectiveContext = localizationContext != null ? localizationContext : autoLocalizationContext(player);
+
       int size = def.rows() * 9;
       Inventory inv = Bukkit.createInventory(
           new PaperMenuHolder(viewer.uniqueId(), key),
@@ -180,7 +185,7 @@ public final class BukkitMenuService implements MenuService {
           def,
           inv,
           Instant.now(),
-          localizationContext,
+          effectiveContext,
           renderEngine,
           pageControlStateStore
       );
@@ -214,6 +219,25 @@ public final class BukkitMenuService implements MenuService {
       sendViewerMessage(viewer.uniqueId(),
           "An error occurred while opening this menu. Please check the server log.");
     }
+  }
+
+  private MenuLocalizationContext autoLocalizationContext(Player player) {
+    if (player == null) {
+      return null;
+    }
+
+    var languageService = services.getService(io.nexstudios.languageservice.service.language.LanguageService.class);
+    var stringPathService = services.getService(io.nexstudios.languageservice.service.path.StringPathService.class);
+    if (languageService == null || stringPathService == null) {
+      return null;
+    }
+
+    String languageId = languageService.getLanguage(player);
+    if (languageId == null || languageId.isBlank()) {
+      return null;
+    }
+
+    return MenuLocalizationContext.of(MenuLocalizationSupport.textResolver(stringPathService, languageId));
   }
 
   @Override
