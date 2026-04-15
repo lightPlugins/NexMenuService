@@ -82,16 +82,6 @@ Optional lifecycle hooks are also supported, such as:
 
 ---
 
-## Multi-language menu text
-
-Menu definitions can mark raw text values with `language:` to resolve them from your language files during item/menu prebuild.
-
-```yml
-display-name: "language:test"
-lore:
-  - "language:more-test"
-```
-
 ### Behavior
 
 - `language:` is the default marker prefix
