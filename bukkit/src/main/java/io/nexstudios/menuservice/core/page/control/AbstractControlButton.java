@@ -11,9 +11,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Material;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.inventory.ItemStack;
@@ -21,20 +24,30 @@ import org.bukkit.inventory.meta.ItemMeta;
 
 /**
  * Reusable click-to-cycle control button for filters and sorts.
+ *
+ * <p>The display name supports a {@code <sort-mode>} placeholder that is replaced
+ * with the label of the currently active mode at render time.
+ *
+ * <p>Example (MiniMessage string):
+ * <pre>{@code "<yellow><bold>Sorting: <sort-mode>"}</pre>
  */
 public class AbstractControlButton extends AbstractMenuElement implements MenuElement {
 
   private final Material material;
-  private final String titlePrefix;
+  /** Resolves the display name for a given active mode label. */
+  private final Function<String, Component> titleResolver;
   private final MenuKey menuKey;
   private final String areaId;
   private final PageControl control;
   private final PageControlStateStore stateStore;
   private final Consumer<MenuContext> afterModeChange;
 
+  /**
+   * Primary constructor – accepts a pre-built resolver function.
+   */
   public AbstractControlButton(
       Material material,
-      String titlePrefix,
+      Function<String, Component> titleResolver,
       MenuKey menuKey,
       String areaId,
       PageControl control,
@@ -42,12 +55,52 @@ public class AbstractControlButton extends AbstractMenuElement implements MenuEl
       Consumer<MenuContext> afterModeChange
   ) {
     this.material = Objects.requireNonNull(material, "material");
-    this.titlePrefix = Objects.requireNonNull(titlePrefix, "titlePrefix");
+    this.titleResolver = Objects.requireNonNull(titleResolver, "titleResolver");
     this.menuKey = Objects.requireNonNull(menuKey, "menuKey");
     this.areaId = Objects.requireNonNull(areaId, "areaId");
     this.control = Objects.requireNonNull(control, "control");
     this.stateStore = Objects.requireNonNull(stateStore, "stateStore");
     this.afterModeChange = Objects.requireNonNull(afterModeChange, "afterModeChange");
+  }
+
+  /**
+   * String overload – {@code titleTemplate} is a MiniMessage string that may contain
+   * the {@code <sort-mode>} placeholder, which is replaced with the active mode label.
+   */
+  public AbstractControlButton(
+      Material material,
+      String titleTemplate,
+      MenuKey menuKey,
+      String areaId,
+      PageControl control,
+      PageControlStateStore stateStore,
+      Consumer<MenuContext> afterModeChange
+  ) {
+    this(material,
+        modeLabel -> MiniMessage.miniMessage().deserialize(
+            Objects.requireNonNull(titleTemplate, "titleTemplate"),
+            Placeholder.parsed("sort-mode", modeLabel)
+        ),
+        menuKey, areaId, control, stateStore, afterModeChange);
+  }
+
+  /**
+   * Component overload – the {@code <sort-mode>} placeholder cannot be used here.
+   * The component is shown as-is regardless of the active mode.
+   * Use the String overload if you need the active mode injected into the title.
+   */
+  public AbstractControlButton(
+      Material material,
+      Component title,
+      MenuKey menuKey,
+      String areaId,
+      PageControl control,
+      PageControlStateStore stateStore,
+      Consumer<MenuContext> afterModeChange
+  ) {
+    this(material,
+        modeLabel -> Objects.requireNonNull(title, "title"),
+        menuKey, areaId, control, stateStore, afterModeChange);
   }
 
   @Override
@@ -59,13 +112,13 @@ public class AbstractControlButton extends AbstractMenuElement implements MenuEl
       activeModeId = control.defaultModeId();
     }
 
+    String activeModeLabel = control.labelForMode(activeModeId);
+
     ItemStack itemStack = new ItemStack(material);
     ItemMeta meta = itemStack.getItemMeta();
     if (meta != null) {
-      meta.displayName(Component.text(titlePrefix + ": " + control.labelForMode(activeModeId))
-          .color(NamedTextColor.GOLD)
-          .decoration(TextDecoration.ITALIC, false)
-          .decorate(TextDecoration.BOLD));
+      meta.displayName(titleResolver.apply(activeModeLabel)
+          .decoration(TextDecoration.ITALIC, false));
       meta.lore(buildLore(activeModeId));
       itemStack.setItemMeta(meta);
     }
@@ -112,4 +165,3 @@ public class AbstractControlButton extends AbstractMenuElement implements MenuEl
     return lore;
   }
 }
-

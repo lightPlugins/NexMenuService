@@ -13,7 +13,6 @@ import io.nexstudios.menuservice.core.page.control.PageControlPipeline;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Material;
 
@@ -53,11 +52,41 @@ public abstract class ControlledPagedMenuView<T> extends PagedMenuView<T> {
 
   protected final <TControl extends PageFilterControl<T>> TControl addFilterControl(
       int slot,
-      String titlePrefix,
+      Component titlePrefix,
       Material material,
       TControl control
   ) {
     filterControls.add(Objects.requireNonNull(control, "control"));
+    addElement(slot, new AbstractControlButton(
+        material,
+        titlePrefix,
+        key(),
+        areaId,
+        control,
+        controlStateStore,
+        this::refreshAndResetPage
+    ));
+    return control;
+  }
+
+  protected final <TControl extends PageFilterControl<T>> TControl addFilterControl(
+      int slot,
+      String titlePrefix,
+      Material material,
+      TControl control
+  ) {
+    return addFilterControl(slot,
+        net.kyori.adventure.text.minimessage.MiniMessage.miniMessage().deserialize(titlePrefix),
+        material, control);
+  }
+
+  protected final <TControl extends PageSortControl<T>> TControl addSortControl(
+      int slot,
+      Component titlePrefix,
+      Material material,
+      TControl control
+  ) {
+    sortControls.add(Objects.requireNonNull(control, "control"));
     addElement(slot, new AbstractControlButton(
         material,
         titlePrefix,
@@ -76,17 +105,9 @@ public abstract class ControlledPagedMenuView<T> extends PagedMenuView<T> {
       Material material,
       TControl control
   ) {
-    sortControls.add(Objects.requireNonNull(control, "control"));
-    addElement(slot, new AbstractControlButton(
-        material,
-        titlePrefix,
-        key(),
-        areaId,
-        control,
-        controlStateStore,
-        this::refreshAndResetPage
-    ));
-    return control;
+    return addSortControl(slot,
+        net.kyori.adventure.text.minimessage.MiniMessage.miniMessage().deserialize(titlePrefix),
+        material, control);
   }
 
   protected final String activeModeId(PageFilterControl<T> control, MenuContext context) {
